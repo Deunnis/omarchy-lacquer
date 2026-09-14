@@ -40,7 +40,7 @@ Item {
   signal editCurve(string name)
 
   readonly property bool enabled_: !inherited && value && value.enabled !== false
-  readonly property bool hasStyles: leafSpec.styles && leafSpec.styles.length > 0
+  readonly property bool hasStyles: !!(leafSpec.styles && leafSpec.styles.length > 0)
   readonly property bool popupOpen: bezierDrop.popupOpen || styleDrop.popupOpen
 
   // A hand-edited block can carry a speed Number() cannot read; 1 ds is the

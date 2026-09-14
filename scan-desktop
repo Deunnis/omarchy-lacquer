@@ -73,6 +73,31 @@ def icon_index(path):
         return {}
 
 
+def index_folders(path):
+    """The theme's icon folders from index.theme, closest to 48 px first."""
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read_string(read_capped(os.path.join(path, "index.theme"), 256 * 1024) or "")
+        head = parser["Icon Theme"]
+    except Exception:
+        return []
+    listed = []
+    for key in ("Directories", "ScaledDirectories"):
+        listed += [d.strip() for d in str(head.get(key, "")).split(",") if d.strip()]
+    ranked = []
+    for folder in dict.fromkeys(listed):
+        if folder.startswith("/") or ".." in folder.split("/") or not parser.has_section(folder):
+            continue
+        section = parser[folder]
+        try:
+            size = int(section.get("Size", "0")) * max(1, int(section.get("Scale", "1")))
+        except ValueError:
+            continue
+        distance = 0 if section.get("Type", "").lower() == "scalable" else abs(size - 48)
+        ranked.append((distance, folder))
+    return [folder for _, folder in sorted(ranked)]
+
+
 def is_icon_theme(path):
     # A theme that only carries cursors, or only inherits, has nothing to show.
     try:
@@ -103,6 +128,15 @@ def lookup_icon(theme, names, seen=None):
                     candidate = os.path.join(base, ctx, name + ext)
                     if os.path.isfile(candidate):
                         return candidate
+    # Themes laid out as <context>/<size> (Breeze: places/48/folder.svg) have
+    # no size folders at the top. The freedesktop index lists every folder with
+    # its size, so search those, nearest to 48 px first.
+    for folder in index_folders(path):
+        for name in names:
+            for ext in (".svg", ".png"):
+                candidate = os.path.join(path, folder, name + ext)
+                if os.path.isfile(candidate):
+                    return candidate
     for parent in str(icon_index(path).get("Inherits", "")).split(","):
         parent = parent.strip()
         if parent and parent != "hicolor":

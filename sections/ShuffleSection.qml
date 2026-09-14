@@ -18,7 +18,7 @@ Item {
 
   readonly property var engine: app.shuffle
   readonly property bool ready: engine !== null && engine.stateLoaded
-  readonly property bool live: ready && engine.active
+  readonly property bool live: !!(ready && engine.active)
   readonly property var st: ready ? engine.st : null
 
   // Nothing about the schedule is a property, so bindings that show times
@@ -256,7 +256,7 @@ Item {
 
             Button {
               required property var modelData
-              readonly property bool picked: section.st && section.st.pool.indexOf(modelData.slug) !== -1
+              readonly property bool picked: !!(section.st && section.st.pool.indexOf(modelData.slug) !== -1)
               text: (picked ? "✓  " : "") + modelData.display
               iconText: modelData.mode === "light" ? "󰖨" : "󰖔"
               selected: picked
@@ -343,7 +343,8 @@ Item {
             BorderSurface {
               id: slotCard
               required property var modelData
-              readonly property bool isActive: section.info.active && section.info.active.id === modelData.id
+              // info.active is undefined without a location; a bool must not get undefined.
+              readonly property bool isActive: !!(section.info.active && section.info.active.id === modelData.id)
               width: column.width
               height: slotRow.implicitHeight + Style.spacing.xxl
               radius: Style.cornerRadius
