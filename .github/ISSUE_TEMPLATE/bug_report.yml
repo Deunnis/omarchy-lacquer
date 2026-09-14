@@ -1,0 +1,57 @@
+name: Bug or something that looks wrong
+description: Something broke, did the wrong thing, or looks off on your setup.
+labels: ["bug", "beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Lacquer. Setups that differ from the developer's (one 1080p laptop screen, foot, light themes) are exactly what the beta needs.
+  - type: dropdown
+    id: section
+    attributes:
+      label: Where
+      options:
+        - Home
+        - Theme & wallpaper
+        - Shuffle
+        - Generate
+        - Fonts & text
+        - GTK & icons
+        - Cursor
+        - Nightlight
+        - Windows / Decoration / Effects / Groups
+        - Animations / Curves
+        - Shell style
+        - Bar
+        - Menu look
+        - Lock & boot
+        - Screensaver
+        - Terminals
+        - btop & prompt
+        - Plugins
+        - Install, update or lacquer-cleanup
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead. A screenshot helps a lot for anything visual.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Output of lacquer-report
+      description: |
+        Run this and paste the output. It only reads. Check it first: log lines can contain paths with your user name.
+        `~/.config/omarchy/plugins/io.github.deunnis.lacquer/lacquer-report`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: changed
+    attributes:
+      label: Did Lacquer change a file it should not have?
+      description: If so, which one. Lacquer keeps first-run backups as `*.lacquer-backup-<time>` next to looknfeel.lua, shell.toml and shell.json.

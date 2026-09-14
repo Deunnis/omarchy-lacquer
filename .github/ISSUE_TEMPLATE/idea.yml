@@ -1,0 +1,16 @@
+name: Idea or missing setting
+description: A setting Lacquer should cover, or something that would make it nicer to use.
+labels: ["idea", "beta"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What you would like to change or see, and where in Lacquer it would live.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you do it today
+      description: The command, config file or other plugin you use for it now, if any.

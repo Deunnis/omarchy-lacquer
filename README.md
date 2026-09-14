@@ -11,6 +11,15 @@ One app for how your Omarchy desktop looks.
 | Screens | Lock & boot · Screensaver |
 | Apps | Terminals · btop & prompt · Plugins |
 
+> **Beta.** Lacquer has so far been used on one laptop (1080p, one screen,
+> foot, mostly light themes). If yours is different (several screens,
+> scaling, a dark theme, kitty/ghostty/alacritty, no lock-explorer), please
+> try it and [open an issue](https://github.com/Deunnis/omarchy-lacquer/issues/new/choose)
+> for anything that breaks or looks wrong. Paste the output of
+> `~/.config/omarchy/plugins/io.github.deunnis.lacquer/lacquer-report` with it.
+> First-run backups and `lacquer-cleanup` (see [Remove](#remove)) are there so
+> nothing is hard to undo.
+
 ## Install
 
     omarchy plugin add https://github.com/Deunnis/omarchy-lacquer --enable
@@ -444,6 +453,7 @@ so the plugin directory comes from `Qt.resolvedUrl(".")` instead.
 | `shell-json-set` | one top-level `shell.json` key from a fresh read |
 | `lacquer-reapply.hook` | copied into `hooks/theme-set.d/` |
 | `lacquer-cleanup` | undoes Lacquer's changes before removal |
+| `lacquer-report` | prints setup details and recent log lines for a bug report |
 
 ## Credits
 

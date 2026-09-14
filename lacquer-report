@@ -1,0 +1,25 @@
+#!/bin/bash
+# Print what a Lacquer bug report needs, for pasting into a GitHub issue.
+# Read-only. Review the output before posting: log lines can contain paths
+# with your user name.
+
+plugin="$HOME/.config/omarchy/plugins/io.github.deunnis.lacquer"
+t() { timeout -k 1 5 "$@" 2>/dev/null; }
+
+echo "### Lacquer"
+echo "commit:   $(t git -C "$plugin" rev-parse --short HEAD || echo unknown)"
+echo "version:  $(t jq -r .version "$plugin/manifest.json" || echo unknown)"
+echo
+echo "### System"
+echo "omarchy:  $(t omarchy-version || echo unknown)"
+echo "hyprland: $(t hyprctl version -j | jq -r '.tag // .version // empty' || echo unknown)"
+echo "terminal: $(t xdg-terminal-exec --print-id || echo unknown)"
+echo "theme:    $(t head -c 128 "$HOME/.local/state/omarchy/current/theme.name" || echo unknown)"
+echo "screens:"
+t hyprctl monitors -j | jq -r '.[] | "  \(.name)  \(.width)x\(.height)@\(.refreshRate | floor)Hz  scale \(.scale)"'
+echo
+echo "### Third-party plugins"
+t omarchy plugin list | grep -i 'third-party' | awk '{print "  " $1 "  " $2}'
+echo
+echo "### Recent Lacquer log lines (last 30 minutes)"
+t journalctl --user --since "30 min ago" --no-pager -o cat | grep -i 'lacquer' | grep -v 'DEBUG' | tail -n 40 | sed 's/^/  /'
