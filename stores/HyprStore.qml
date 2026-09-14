@@ -10,7 +10,7 @@ import "../TomlEdit.js" as TomlEdit
 
 // Everything Lacquer writes into Hyprland's own config: the managed blocks in
 // ~/.config/hypr/looknfeel.lua and hyprland.lua, live preview through
-// `hyprctl eval`, debounced persistence, and migration from Omaland/Omanimate.
+// `hyprctl eval`, debounced persistence, and the opt-in import from Omaland.
 Item {
   id: root
   visible: false
@@ -225,7 +225,7 @@ Item {
     // One eval in flight at a time with the newest state queued behind it, so
     // a slider drag cannot outrun hyprctl.
     if (evalProc.running) { root.previewPending = true; return }
-    evalProc.command = ["hyprctl", "eval", body]
+    evalProc.command = ["timeout", "-k", "1", "5", "hyprctl", "eval", body]
     evalProc.running = true
   }
 
@@ -275,8 +275,27 @@ Item {
 
   // ------------------------------------------------------------- migration
 
-  // Adopts Omaland's and Omanimate's blocks into Lacquer's own, then drops
-  // their fences. Nothing is uninstalled here — that is offered, never done.
+  // Omaland's block, found in looknfeel.lua. Nothing is imported until the user
+  // asks (importLegacy), and nothing is ever uninstalled from here.
+  property var legacyBlocks: []
+
+  function detectLegacy(text) {
+    var found = []
+    for (var i = 0; i < StyleLua.LEGACY_FENCES.length; i++) {
+      var fence = StyleLua.LEGACY_FENCES[i]
+      var split = StyleLua.splitFences(text, fence.begin, fence.end)
+      if (split.found && split.body.replace(/\s/g, "") !== "") found.push(fence.name)
+    }
+    root.legacyBlocks = found
+  }
+
+  function importLegacy() {
+    if (root.legacyBlocks.length === 0 || !root.blockRead) return
+    migrate(configFile.text())
+  }
+
+  // Adopts the legacy blocks into Lacquer's own on top of what Lacquer already
+  // holds, then drops their fences.
   function migrate(text) {
     var pending = []
     for (var i = 0; i < StyleLua.LEGACY_FENCES.length; i++) {
@@ -289,9 +308,9 @@ Item {
     migrationQueue = pending
     migrationIndex = 0
     migrationText = text
-    migrationOverrides = ({})
-    migrationLeaves = ({})
-    migrationCurves = ({})
+    migrationOverrides = StyleLua.cloneOverrides(root.overrides)
+    migrationLeaves = StyleLua.cloneLeafMap(root.leaves)
+    migrationCurves = StyleLua.cloneCurveMap(root.curves)
     migrationNames = []
     readNextLegacy()
     return true
@@ -315,7 +334,7 @@ Item {
     if (migrationIndex >= migrationQueue.length) { finishMigration(); return }
     var fence = migrationQueue[migrationIndex]
     var split = StyleLua.splitFences(migrationText, fence.begin, fence.end)
-    legacyReader.command = ["lua", app.pluginDir + "/read.lua", "-e", split.body]
+    legacyReader.command = ["timeout", "-k", "2", "10", "lua", app.pluginDir + "/read.lua", "-e", split.body]
     legacyReader.running = true
   }
 
@@ -369,8 +388,8 @@ Item {
                                             root.baseCurves, root.baseLeaves)
     next = StyleLua.applyBlock(next, body)
 
-    root.migrationNotice = "Adopted your settings from " + migrationNames.join(" and ")
-      + ". Your desktop is unchanged."
+    root.migrationNotice = "Imported your settings from " + migrationNames.join(" and ") + "."
+    root.legacyBlocks = []
     root.selfWrite = true
     configFile.setText(next)
   }
@@ -381,7 +400,7 @@ Item {
     var keys = LookSchema.queryKeys()
     var batch = []
     for (var i = 0; i < keys.length; i++) batch.push("getoption " + keys[i])
-    readProc.command = ["hyprctl", "-j", "--batch", batch.join(" ; ")]
+    readProc.command = ["timeout", "-k", "1", "10", "hyprctl", "-j", "--batch", batch.join(" ; ")]
     readProc.running = true
   }
 
@@ -415,9 +434,9 @@ Item {
   }
 
   function readBlock(text) {
+    detectLegacy(text)
     var split = StyleLua.splitBlock(text)
     if (!split.found) {
-      if (migrate(text)) return
       root.overrides = ({}); root.leaves = ({}); root.curves = ({})
       root.blockRead = true
       return
@@ -427,7 +446,7 @@ Item {
       root.blockRead = true
       return
     }
-    blockReader.command = ["lua", app.pluginDir + "/read.lua", "-e", split.body]
+    blockReader.command = ["timeout", "-k", "2", "10", "lua", app.pluginDir + "/read.lua", "-e", split.body]
     blockReader.running = true
   }
 
@@ -523,7 +542,7 @@ Item {
 
   Process {
     id: reloadProc
-    command: ["hyprctl", "reload"]
+    command: ["timeout", "-k", "1", "10", "hyprctl", "reload"]
     onExited: { errorsProc.running = true; root.refresh() }
   }
 
@@ -531,7 +550,7 @@ Item {
   // turns "Lacquer wrote something" into "Hyprland accepted it".
   Process {
     id: errorsProc
-    command: ["hyprctl", "configerrors"]
+    command: ["timeout", "-k", "1", "5", "hyprctl", "configerrors"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -579,7 +598,7 @@ Item {
         root.opaqueWindows = false
         return
       }
-      windowsReader.command = ["lua", app.pluginDir + "/read.lua", "-e", split.body]
+      windowsReader.command = ["timeout", "-k", "2", "10", "lua", app.pluginDir + "/read.lua", "-e", split.body]
       windowsReader.running = true
     }
     onLoadFailed: root.opaqueWindows = false
@@ -606,7 +625,7 @@ Item {
     // Run the packaged file directly rather than its text: it is Omarchy's own
     // and only needs reading once.
     onLoaded: {
-      baselineReader.command = ["lua", app.pluginDir + "/read.lua", path]
+      baselineReader.command = ["timeout", "-k", "2", "10", "lua", app.pluginDir + "/read.lua", path]
       baselineReader.running = true
     }
   }

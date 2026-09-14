@@ -27,13 +27,26 @@ OFF_TEMP = 6500
 PROFILE_RE = re.compile(r"profile\s*\{([^}]*)\}", re.S)
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 
 def read(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return None
+    return read_capped(path)
 
 
 def write_atomic(path, text):
@@ -146,9 +159,9 @@ def restart():
     # pkill returns before hyprsunset has let go of the display, and a new
     # instance started in that window exits at once. Wait for the old one to
     # be gone, then make sure the new one stayed up.
-    subprocess.run(["pkill", "-x", "hyprsunset"], capture_output=True)
+    subprocess.run(["pkill", "-x", "hyprsunset"], capture_output=True, timeout=5)
     if not wait_for(False, 3):
-        subprocess.run(["pkill", "-9", "-x", "hyprsunset"], capture_output=True)
+        subprocess.run(["pkill", "-9", "-x", "hyprsunset"], capture_output=True, timeout=5)
         wait_for(False, 1)
     for _ in range(2):
         launch()

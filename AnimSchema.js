@@ -1,10 +1,10 @@
 .pragma library
 
-// The catalogue of Hyprland animation leaves Omanimate exposes, grouped the
+// The catalogue of Hyprland animation leaves Lacquer exposes, grouped the
 // way Hyprland's own animation tree is shaped.
 //
 // A leaf Omarchy does not ship a value for inherits from its parent. Hyprland
-// reports those as "not overridden" rather than resolving them, so Omanimate
+// reports those as "not overridden" rather than resolving them, so Lacquer
 // shows them as inherited and materialises them from the parent's effective
 // values the moment you touch one — there is no honest number to show first.
 //

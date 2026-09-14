@@ -25,13 +25,26 @@ TERMINALS = {
 BTOP = os.path.join(CFG, "btop/btop.conf")
 STARSHIP = os.path.join(CFG, "starship.toml")
 
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 
 def read(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return None
+    return read_capped(path)
 
 
 def write(path, text):
@@ -216,7 +229,7 @@ def term_set(name, text, key, value):
 def reload_terminal(name):
     sig = {"kitty": "-USR1", "ghostty": "-SIGUSR2"}.get(name)
     if sig:
-        subprocess.run(["pkill", sig, "-x", name], capture_output=True)
+        subprocess.run(["pkill", sig, "-x", name], capture_output=True, timeout=5)
 
 
 # ------------------------------------------------------------------ btop, starship
@@ -248,6 +261,14 @@ def plain(raw):
     return raw.strip('"')
 
 
+def default_terminal():
+    try:
+        out = subprocess.run(["xdg-terminal-exec", "--print-id"], capture_output=True, text=True, timeout=5).stdout
+        return out.strip()[:200]
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
 def status():
     terms = []
     for name, path in TERMINALS.items():
@@ -261,10 +282,10 @@ def status():
         terms.append({"name": name, "values": values})
     btop_text = read(BTOP)
     star_text = read(STARSHIP)
-    running = subprocess.run(["pgrep", "-x", "btop"], capture_output=True).returncode == 0
+    running = subprocess.run(["pgrep", "-x", "btop"], capture_output=True, timeout=5).returncode == 0
     return {
         "terminals": terms,
-        "default": subprocess.run(["xdg-terminal-exec", "--print-id"], capture_output=True, text=True).stdout.strip(),
+        "default": default_terminal(),
         "btop": None if btop_text is None else dict(
             {k: plain(get_value(btop_text, k, " = ", flat=True)) for k in BTOP_KEYS}, running=running),
         "starship": None if star_text is None else
@@ -307,7 +328,7 @@ def main(argv):
             nxt = set_value(text, key, " = ", typed(BTOP_KEYS[key], value, True), flat=True)
             if nxt != text:
                 write(BTOP, nxt)
-                subprocess.run(["pkill", "-SIGUSR2", "-x", "btop"], capture_output=True)
+                subprocess.run(["pkill", "-SIGUSR2", "-x", "btop"], capture_output=True, timeout=5)
         elif target == "starship":
             text = read(STARSHIP)
             if text is None or key not in STARSHIP_KEYS:

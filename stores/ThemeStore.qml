@@ -11,8 +11,8 @@ import Quickshell.Io
 // open. Completion is read from theme.name, which the command rewrites once the
 // new theme is in place.
 //
-// Its browser-policy step needs root, but on this machine sudo grants that one
-// command without a password, so no prompt appears.
+// Its browser-policy step needs root; Omarchy installs a rule for that one
+// command itself, so a normal install shows no prompt.
 Item {
   id: root
   visible: false
@@ -50,7 +50,7 @@ Item {
 
   function rescan() {
     if (!themesProc.running) themesProc.running = true
-    themeNameFile.reload()
+    if (!themeNameRead.running) themeNameRead.running = true
     scanWallpapers()
   }
 
@@ -88,7 +88,7 @@ Item {
 
   function noteCurrent(text) {
     var name = String(text || "").trim()
-    if (name === "") return
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(name)) return
     root.current = name
     if (root.applyingTheme !== "" && name === root.applyingTheme) {
       root.applyingTheme = ""
@@ -101,7 +101,7 @@ Item {
 
   Process {
     id: themesProc
-    command: ["python3", root.app.pluginDir + "/scan-themes"]
+    command: ["timeout", "-k", "2", "20", "python3", root.app.pluginDir + "/scan-themes"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -117,7 +117,7 @@ Item {
 
   Process {
     id: wallsProc
-    command: ["python3", root.app.pluginDir + "/scan-wallpapers"]
+    command: ["timeout", "-k", "2", "20", "python3", root.app.pluginDir + "/scan-wallpapers"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -166,12 +166,20 @@ Item {
     }
   }
 
+  // theme.name is watched for changes, and read through the bounded reader.
   FileView {
     id: themeNameFile
     path: root.home + "/.local/state/omarchy/current/theme.name"
     printErrors: false
     watchChanges: true
-    onLoaded: root.noteCurrent(text())
-    onFileChanged: reload()
+    onFileChanged: { reload(); if (!themeNameRead.running) themeNameRead.running = true }
+  }
+
+  Process {
+    id: themeNameRead
+    command: ["timeout", "-k", "1", "5", root.app.pluginDir + "/read-state", root.home + "/.local/state/omarchy/current/theme.name", "256"]
+    running: true
+    stdout: StdioCollector { id: themeNameOut; waitForEnd: true }
+    onExited: function(code) { if (code === 0) root.noteCurrent(themeNameOut.text) }
   }
 }

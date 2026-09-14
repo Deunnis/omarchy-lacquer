@@ -66,7 +66,7 @@ Item {
     if (proc.running) { root.queued = { args: args, text: doneText }; return }
     root.busy = args[0] !== "print"
     proc.doneText = doneText
-    proc.command = [root.app.pluginDir + "/nightlight"].concat(args)
+    proc.command = ["timeout", "-k", "2", "40", root.app.pluginDir + "/nightlight"].concat(args)
     proc.running = true
   }
 

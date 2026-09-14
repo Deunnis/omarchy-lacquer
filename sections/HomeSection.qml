@@ -324,8 +324,8 @@ Item {
 
   // ================================================================ aurora
 
-  // One slow clock for everything that moves continuously. Measured on this
-  // machine: anything animating at the display rate without pause makes the
+  // One slow clock for everything that moves continuously. Measured on a
+  // Ryzen 5 4500U laptop: anything animating at the display rate without pause makes the
   // shell redraw the panel 60 times a second, about 12 % of a core, whatever
   // it animates. The drift and the palette bob are slow enough to step at
   // ~15 frames a second (roughly 2 %) and look the same.

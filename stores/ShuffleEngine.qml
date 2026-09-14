@@ -21,9 +21,12 @@ import "../SunTimes.js" as Sun
 //              nothing at all: two engines would both react to the same boot
 //              and the same slot boundary. It only reads OmaShuffle's state so
 //              the UI can show it.
-//   adoption   With OmaShuffle gone and no state of its own yet, it copies
+//   adoption   Only after "Move to Lacquer" (which leaves an adopt-omashuffle
+//              marker), and only with no state of its own yet, it copies
 //              OmaShuffle's state.json — lastBootId included, so the shell
 //              restart that follows a removal is not mistaken for a new boot.
+//              Someone who simply uninstalls OmaShuffle is not opted back in.
+//   default    With no state at all, the shuffle is off until switched on.
 //   override   A manual pick pauses Day & Night until the next boundary. In
 //              OmaShuffle only its own picks could clear that pause; here a
 //              theme applied from anywhere (a terminal, the Omarchy menu) does.
@@ -117,7 +120,9 @@ Item {
   Process {
     id: adoptProc
     command: ["sh", "-c",
-      'mkdir -p "$1" || exit 0\n'
+      'mkdir -p "$1" && chmod 700 "$1" || exit 0\n'
+      + '[ -f "$1/adopt-omashuffle" ] || exit 0\n'
+      + 'rm -f "$1/adopt-omashuffle"\n'
       + '[ -e "$2" ] && exit 0\n'
       + '[ -f "$3" ] && [ ! -L "$3" ] && cp "$3" "$2" && echo adopted\n'
       + 'exit 0\n', "sh", root.ownDir, root.ownState, root.legacyState]
@@ -260,6 +265,9 @@ Item {
   function loadState(raw) {
     var parsed = null
     if (raw) { try { parsed = JSON.parse(raw) } catch (e) { parsed = null } }
+    // No saved state (a fresh install): the boot shuffle starts switched off.
+    // OmaShuffle's own state, read while dormant, keeps its own setting.
+    if (!parsed && !root.dormant) parsed = { enabled: false }
     root.st = Deck.normalizeState(parsed)
     root.stateLoaded = true
     root.maybeBootSwitch()

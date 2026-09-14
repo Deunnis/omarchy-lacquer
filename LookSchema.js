@@ -11,7 +11,7 @@
 // Colors are absent on purpose. Omarchy themes own general:col:* via
 // ~/.local/state/omarchy/current/theme/hyprland.lua, which loads *before*
 // hypr/looknfeel.lua, so writing colors here would pin them and break
-// `omarchy theme set` — and on this machine aether owns themes.
+// `omarchy theme set` and the theme tools built on it.
 //
 // Item fields: key (hyprctl path), type, min/max/step, unit, and needs (key of
 // a bool that must be on for the row to be live). Slider bounds are

@@ -7,7 +7,8 @@
 # Lacquer, after those follow-up commands have finished.
 
 plugin="$HOME/.config/omarchy/plugins/io.github.deunnis.lacquer"
-pins="$HOME/.local/state/omarchy/io.github.deunnis.lacquer/pins.json"
+state="$HOME/.local/state/omarchy/io.github.deunnis.lacquer"
+pins="$state/pins.json"
 
 # Lacquer was removed: stop acting on its pins and clean up after it.
 if [[ ! -d $plugin ]]; then
@@ -15,14 +16,21 @@ if [[ ! -d $plugin ]]; then
   exit 0
 fi
 
-[[ -f $pins ]] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 
+# Read the pins through the plugin's bounded reader: a plain regular file only
+# (no symlink or FIFO), at most 16 KiB.
+pins_json=$(timeout -k 1 5 "$plugin/read-state" "$pins" 16384 2>/dev/null) || exit 0
+
 for key in color-scheme gtk-theme icon-theme; do
-  value=$(jq -r --arg k "$key" '.[$k] // empty | strings' "$pins" 2>/dev/null)
-  if [[ -n $value ]]; then
-    gsettings set org.gnome.desktop.interface "$key" "$value" 2>/dev/null
-  fi
+  value=$(printf '%s' "$pins_json" | jq -r --arg k "$key" '.[$k] // empty | strings' 2>/dev/null)
+  [[ -n $value ]] || continue
+  # Only names gsettings could legitimately hold; anything else is ignored.
+  case $key in
+    color-scheme) [[ $value == default || $value == prefer-dark || $value == prefer-light ]] || continue ;;
+    *) [[ $value =~ ^[A-Za-z0-9._+\ -]{1,80}$ ]] || continue ;;
+  esac
+  timeout -k 1 5 gsettings set org.gnome.desktop.interface "$key" "$value" 2>/dev/null
 done
 
 exit 0

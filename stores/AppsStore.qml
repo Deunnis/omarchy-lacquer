@@ -53,7 +53,7 @@ Item {
   function exec(args, doneText) {
     if (proc.running) { var q = root.queued.slice(); q.push({ args: args, text: doneText }); root.queued = q; return }
     proc.doneText = doneText
-    proc.command = [root.app.pluginDir + "/app-config"].concat(args)
+    proc.command = ["timeout", "-k", "2", "20", root.app.pluginDir + "/app-config"].concat(args)
     proc.running = true
   }
 

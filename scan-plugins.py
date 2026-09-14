@@ -38,8 +38,10 @@ def manifests(root, first_party):
 
 def load(path, first_party):
     try:
+        if not os.path.isfile(path) or os.path.getsize(path) > 256 * 1024:
+            return None
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+            data = json.loads(handle.read(256 * 1024 + 1))
     except Exception:
         return None
     if not isinstance(data, dict) or not data.get("id"):

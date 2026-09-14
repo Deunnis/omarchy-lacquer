@@ -9,8 +9,7 @@
 // a theme switch.
 //
 // Which is exactly why colour rows are marked. Pinning a colour here means a
-// theme change will no longer move it, and on this machine aether and
-// OmaShuffle own colour. Structural rows (sizes, widths, alphas, spacing,
+// theme change will no longer move it, and colour belongs to the theme. Structural rows (sizes, widths, alphas, spacing,
 // font) carry no such tension and are unmarked.
 //
 // Key catalogue and defaults come from

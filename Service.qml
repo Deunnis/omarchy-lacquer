@@ -42,7 +42,7 @@ QtObject {
 
   // Same ownership rule as the launcher entry, copied verbatim.
   readonly property string hookScript:
-      'mkdir -p "$4"\n'
+      'mkdir -p "$4" && chmod 700 "$4"\n'
     + '[ -f "$1" ] || exit 0\n'
     + 'if [ -e "$2" ] && ! grep -q "$3" "$2"; then exit 0; fi\n'
     + 'mkdir -p "${2%/*}" || exit 0\n'
@@ -63,9 +63,9 @@ QtObject {
   // Setting a monospace font restarts the shell. The panel leaves a marker
   // naming its section; a fresh one reopens Lacquer right where it was.
   readonly property string reopenScript:
-      'f=$1; [ -f "$f" ] || exit 0\n'
+      'f=$1; [ -f "$f" ] && [ ! -L "$f" ] || exit 0\n'
     + 'age=$(( $(date +%s) - $(stat -c %Y "$f") ))\n'
-    + 'sec=$(head -c 40 "$f" | tr -cd "a-z-")\n'
+    + 'sec=$(timeout 2 head -c 40 "$f" | tr -cd "a-z-")\n'
     + 'rm -f "$f"\n'
     + '[ "$age" -lt 120 ] && [ -n "$sec" ] || exit 0\n'
     + 'for i in 1 2 3 4 5 6 7 8 9 10; do\n'
@@ -80,7 +80,7 @@ QtObject {
     Quickshell.execDetached(["sh", "-c", installScript, "sh",
                              pluginDir + "/lacquer.desktop", dest, marker, pluginDir + "/icon.png"])
     Quickshell.execDetached(["sh", "-c", hookScript, "sh",
-                             pluginDir + "/lacquer-reapply.hook", hookDest, marker, stateDir])
+                             pluginDir + "/lacquer-reapply.hook", hookDest, "^# X-Lacquer-Managed=true$", stateDir])
     Quickshell.execDetached(["sh", "-c", reopenScript, "sh", stateDir + "/reopen"])
   }
 

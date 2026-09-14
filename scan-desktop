@@ -4,7 +4,7 @@
 Emits one JSON object for Lacquer's Desktop sections: current values from
 gsettings and Omarchy's own commands, what the active theme would set on its
 own (so a pin can say what it is overriding), and the choices installed on
-this machine, with a few preview icons per icon theme.
+the computer, with a few preview icons per icon theme.
 """
 import configparser, json, os, re, subprocess
 
@@ -21,6 +21,23 @@ PREVIEW_ICONS = [
     ["text-x-generic", "text-plain"],
 ]
 SIZE_ORDER = ["48x48", "scalable", "64x64", "256x256", "32x32", "48x48@2x", "24x24@2x", "24x24"]
+
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
 
 
 def run(cmd, timeout=10):
@@ -50,7 +67,7 @@ def find_theme_dir(name, roots):
 def icon_index(path):
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
-        parser.read(os.path.join(path, "index.theme"), encoding="utf-8")
+        parser.read_string(read_capped(os.path.join(path, "index.theme"), 256 * 1024) or "")
         return parser["Icon Theme"]
     except Exception:
         return {}
@@ -169,11 +186,7 @@ def theme_follows():
     state = os.path.join(HOME, ".local/state/omarchy/current/theme")
     mode = run(["omarchy-theme-color", "--file", os.path.join(state, "colors.toml"), "mode"]).strip()
     icons = "Yaru-blue"
-    try:
-        with open(os.path.join(state, "icons.theme")) as f:
-            icons = f.read().strip() or icons
-    except OSError:
-        pass
+    icons = (read_capped(os.path.join(state, "icons.theme"), 4096) or "").strip() or icons
     light = mode == "light"
     return {
         "color-scheme": "prefer-light" if light else "prefer-dark",

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Print a small state file, refusing anything but a plain regular file.
+
+  read-state <path> <max-bytes>
+
+The same bounded reader the shuffle engine uses (from OmaShuffle): the file is
+opened once with O_NOFOLLOW|O_NONBLOCK, so a symlink or a FIFO planted at the
+path is refused without blocking, fstat on that descriptor must show a regular
+file, and at most max-bytes+1 bytes are read.
+
+Exit codes: 0 printed, 2 missing, a symlink or unopenable, 3 not a regular
+file, 4 larger than max-bytes, 5 bad arguments.
+"""
+import os, stat, sys
+
+
+def main(argv):
+    if len(argv) != 2 or not argv[1].isdigit():
+        return 5
+    path, limit = argv[0], min(int(argv[1]), 4 * 1024 * 1024)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return 2
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return 3
+        chunks, total = [], 0
+        while total <= limit:
+            chunk = os.read(fd, (limit + 1) - total)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > limit:
+            return 4
+        sys.stdout.buffer.write(b"".join(chunks))
+        return 0
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

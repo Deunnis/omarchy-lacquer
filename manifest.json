@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "author": "deunnis",
   "license": "MIT",
-  "description": "One app for how this laptop looks: themes, wallpapers, theme shuffle and aether generation; fonts, GTK, icons, cursor and nightlight; windows, animations and curves; shell style, bar and menu look; lock, boot and screensaver; terminals, btop and prompt; and every plugin's settings. Live, through the tools that already own each setting.",
+  "description": "One app for how your Omarchy desktop looks: themes, wallpapers, theme shuffle and aether generation; fonts, GTK, icons, cursor and nightlight; windows, animations and curves; shell style, bar and menu look; lock, boot and screensaver; terminals, btop and prompt; and every plugin's settings. Live, through the tools that already own each setting.",
   "kinds": ["panel", "service"],
   "entryPoints": {
     "panel": "Panel.qml",

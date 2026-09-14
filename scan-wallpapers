@@ -7,17 +7,33 @@ then the theme's own, both sorted. Emits JSON:
 The current path is the resolved target of current/background, so it compares
 equal to one of the listed paths.
 """
-import json, os, sys
+import json, os, re, sys
 
 EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
 
 def main():
     home = os.environ.get("HOME", "")
     state = os.path.join(home, ".local", "state", "omarchy", "current")
-    try:
-        with open(os.path.join(state, "theme.name")) as f:
-            theme = f.read().strip()
-    except OSError:
+    theme = (read_capped(os.path.join(state, "theme.name"), 256) or "").strip()
+    # theme.name becomes a path component below; only a real slug may.
+    if not re.match(r"^[a-z0-9][a-z0-9._-]{0,127}$", theme):
         theme = ""
     dirs = [(os.path.join(home, ".config", "omarchy", "backgrounds", theme), True),
             (os.path.join(state, "theme", "backgrounds"), False)]

@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Undo what Omarchy Lacquer wrote, before removing the plugin.
+
+  lacquer-cleanup          show what would be undone (changes nothing)
+  lacquer-cleanup --yes    undo it
+
+Removed and put back:
+  - Lacquer's fenced blocks in ~/.config/hypr/looknfeel.lua, hyprland.lua and
+    autostart.lua (look & feel, animations, curves, full opacity, cursor theme,
+    nightlight autostart), followed by `hyprctl reload`
+  - a hyprsunset.conf that Lacquer wrote, replaced by Omarchy's default
+  - GTK / colour-scheme / icon pins, then the theme's own values re-applied
+  - a cursor theme Lacquer saved, back to the default
+  - the theme-set hook, the launcher entry and Lacquer's state folder
+
+Left alone, and listed so you can decide:
+  - shell.toml and shell.json values (Shell style, Bar, plugin settings, idle
+    timings) - they are ordinary settings, also editable with the omarchy CLI
+  - fonts and text size (set through Omarchy's own commands)
+  - terminal, btop and starship lines
+  - lock-explorer and OmaMenu settings (they belong to those plugins)
+  - the *.lacquer-backup-* copies made on first run
+
+Only files that carry Lacquer's own markers are deleted.
+"""
+import os, re, shutil, subprocess, sys
+
+HOME = os.path.expanduser("~")
+OMARCHY = os.environ.get("OMARCHY_PATH") or "/usr/share/omarchy"
+PLUGIN_ID = "io.github.deunnis.lacquer"
+STATE = os.path.join(HOME, ".local/state/omarchy", PLUGIN_ID)
+MARKER = os.path.join(HOME, ".local/state/omarchy/lacquer-backups-made")
+HOOK = os.path.join(HOME, ".config/omarchy/hooks/theme-set.d/lacquer-reapply")
+LAUNCHER = os.path.join(HOME, ".local/share/applications/lacquer.desktop")
+HYPR = os.path.join(HOME, ".config/hypr")
+SUNSET = os.path.join(HYPR, "hyprsunset.conf")
+SUNSET_DEFAULT = os.path.join(OMARCHY, "config/hypr/hyprsunset.conf")
+BLOCKS = [
+    ("looknfeel.lua", "-- >>> lacquer managed block >>>", "-- <<< lacquer managed block <<<"),
+    ("hyprland.lua", "-- >>> lacquer managed block >>>", "-- <<< lacquer managed block <<<"),
+    ("autostart.lua", "-- >>> lacquer desktop block >>>", "-- <<< lacquer desktop block <<<"),
+]
+MAX_BYTES = 4 * 1024 * 1024
+
+
+def read(path):
+    """A regular file (symlinks to one are fine, dotfile managers use them), capped."""
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > MAX_BYTES:
+            return None
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def write(path, text):
+    target = os.path.realpath(path)
+    tmp = target + ".lacquer-cleanup"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.chmod(tmp, os.stat(target).st_mode & 0o777)
+    os.replace(tmp, target)
+
+
+def strip_block(text, begin, end):
+    b = text.find(begin)
+    if b == -1:
+        return None
+    e = text.find(end, b)
+    if e == -1:
+        return None
+    before, after = text[:b], text[e + len(end):]
+    joined = before.rstrip("\n") + "\n" + after.lstrip("\n")
+    if not after.strip():
+        joined = before.rstrip("\n") + "\n"
+    return joined
+
+
+def has_marker(path, marker):
+    text = read(path)
+    return text is not None and re.search(r"^" + re.escape(marker) + r"$", text, re.M) is not None
+
+
+def run(cmd):
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def main(argv):
+    apply = "--yes" in argv
+    if any(a not in ("--yes",) for a in argv):
+        print(__doc__)
+        return 2
+
+    actions, kept = [], []
+
+    hypr_changed = False
+    cursor_saved = False
+    sunset_autostart = False
+    for name, begin, end in BLOCKS:
+        path = os.path.join(HYPR, name)
+        text = read(path)
+        if text is None:
+            continue
+        stripped = strip_block(text, begin, end)
+        if stripped is None:
+            continue
+        body = text[text.find(begin):text.find(end)]
+        cursor_saved = cursor_saved or "XCURSOR_THEME" in body
+        sunset_autostart = sunset_autostart or "hyprsunset" in body
+        actions.append(("Remove Lacquer's block from ~/.config/hypr/" + name, path, stripped))
+        hypr_changed = True
+
+    sunset = read(SUNSET)
+    default_sunset = read(SUNSET_DEFAULT)
+    if sunset is not None and sunset.startswith("# Written by Lacquer.") and default_sunset is not None:
+        actions.append(("Put Omarchy's default hyprsunset.conf back", SUNSET, default_sunset))
+
+    pins = os.path.join(STATE, "pins.json")
+    pinned = os.path.isfile(pins) and (read(pins) or "").strip() not in ("", "{}")
+    if pinned:
+        actions.append(("Unpin GTK theme, colour scheme and icons, and re-apply the theme's own", None, "pins"))
+    if cursor_saved:
+        actions.append(("Set the cursor back to the default theme at 24 px", None, "cursor"))
+    if has_marker(HOOK, "# X-Lacquer-Managed=true"):
+        actions.append(("Delete the theme-set hook " + HOOK.replace(HOME, "~"), HOOK, None))
+    if has_marker(LAUNCHER, "X-Lacquer-Managed=true"):
+        actions.append(("Delete the launcher entry " + LAUNCHER.replace(HOME, "~"), LAUNCHER, None))
+    if os.path.isdir(STATE):
+        actions.append(("Delete Lacquer's state folder " + STATE.replace(HOME, "~"), STATE, None))
+    if os.path.lexists(MARKER):
+        actions.append(("Delete the first-run backup marker", MARKER, None))
+
+    backups = []
+    for folder in (HYPR, os.path.join(HOME, ".config/omarchy")):
+        try:
+            backups += [os.path.join(folder, f) for f in sorted(os.listdir(folder)) if ".lacquer-backup-" in f]
+        except OSError:
+            pass
+    kept.append("shell.toml and shell.json values set in Shell style, Bar, Plugins and Screensaver")
+    kept.append("fonts and text size; terminal, btop and starship settings")
+    kept.append("lock-explorer and OmaMenu settings")
+    kept += ["backup: " + b.replace(HOME, "~") for b in backups]
+
+    if not actions:
+        print("Nothing of Lacquer's to undo.")
+    else:
+        print("Undoing:" if apply else "Would undo (run with --yes to do it):")
+    for label, _, _ in actions:
+        print("  - " + label)
+    print("Left as they are:")
+    for k in kept:
+        print("  - " + k)
+
+    if not apply or not actions:
+        return 0
+
+    for label, path, payload in actions:
+        try:
+            if payload == "pins":
+                os.remove(pins)
+                run(["omarchy-theme-set-gnome"])
+            elif payload == "cursor":
+                pass  # applied after the blocks are gone
+            elif isinstance(payload, str):
+                write(path, payload)
+            elif os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+        except OSError as e:
+            print("  ! could not: " + label + " (" + str(e) + ")")
+
+    if cursor_saved:
+        run(["hyprctl", "setcursor", "Adwaita", "24"])
+        run(["gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", "default"])
+        run(["gsettings", "set", "org.gnome.desktop.interface", "cursor-size", "24"])
+    if hypr_changed:
+        run(["hyprctl", "reload"])
+    if sunset_autostart or (sunset is not None and sunset.startswith("# Written by Lacquer.")):
+        run(["pkill", "-x", "hyprsunset"])
+    print("Done. Now remove the plugin:  omarchy plugin remove " + PLUGIN_ID)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

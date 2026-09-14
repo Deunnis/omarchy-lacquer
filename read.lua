@@ -14,6 +14,11 @@
 --
 -- Nothing is applied: every stub only records. Exits non-zero with the Lua
 -- error on stderr if the chunk does not load or run.
+--
+-- The chunk runs sandboxed: its globals are the stubs plus pure libraries
+-- (string, table, math, utf8 and the basic functions). os, io, require, load,
+-- dofile, package and debug are not reachable, anything else resolves to an
+-- inert stub, and an instruction budget stops a chunk that never finishes.
 
 local out = {}
 
@@ -99,13 +104,38 @@ else
   file:close()
 end
 
-local chunk, loadErr = load(source, name, "t")
+-- A value that answers every index and call with itself, so config that reaches
+-- for things this reader does not model (require("default.hypr.paths").home,
+-- o.cmd_present(...)) keeps running without touching the system.
+local stub = setmetatable({}, {
+  __index = function(self) return self end,
+  __call = function(self) return self end,
+  __concat = function() return "" end,
+  __tostring = function() return "" end,
+})
+
+local env = {
+  hl = hl, o = o,
+  string = string, table = table, math = math, utf8 = utf8,
+  pairs = pairs, ipairs = ipairs, next = next, select = select, type = type,
+  tostring = tostring, tonumber = tonumber, pcall = pcall, error = error,
+  assert = assert, rawget = rawget, rawequal = rawequal, rawlen = rawlen,
+  setmetatable = setmetatable, getmetatable = getmetatable,
+  print = noop, require = function() return stub end,
+}
+env._G = env
+setmetatable(env, { __index = function() return stub end })
+
+local chunk, loadErr = load(source, name, "t", env)
 if not chunk then
   io.stderr:write(tostring(loadErr))
   os.exit(1)
 end
 
+-- Ten million VM instructions is far beyond any real config block.
+debug.sethook(function() error("config chunk ran too long", 2) end, "", 10000000)
 local ok, runErr = pcall(chunk)
+debug.sethook()
 if not ok then
   io.stderr:write(tostring(runErr))
   os.exit(1)

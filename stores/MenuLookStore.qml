@@ -35,7 +35,7 @@ Item {
 
   function reset() {
     sendTimer.stop()
-    runProc.command = ["omarchy-shell", "omamenu", "resetLook"]
+    runProc.command = ["timeout", "-k", "1", "5", "omarchy-shell", "omamenu", "resetLook"]
     runProc.running = true
   }
 
@@ -44,7 +44,7 @@ Item {
     interval: 250
     onTriggered: {
       if (runProc.running) { restart(); return }
-      runProc.command = ["omarchy-shell", "omamenu", "setLook", String(root.look.scale), String(root.look.cornerRadius),
+      runProc.command = ["timeout", "-k", "1", "5", "omarchy-shell", "omamenu", "setLook", String(root.look.scale), String(root.look.cornerRadius),
                          String(root.look.borderWidth), String(root.look.transparency)]
       runProc.running = true
     }
@@ -62,7 +62,7 @@ Item {
 
   Process {
     id: readProc
-    command: ["omarchy-shell", "omamenu", "look"]
+    command: ["timeout", "-k", "1", "5", "omarchy-shell", "omamenu", "look"]
     stdout: StdioCollector { id: readOut; waitForEnd: true }
     onExited: function(code) {
       // look and available first: the section builds its rows the moment

@@ -13,6 +13,23 @@ PREVIEWS = os.path.join(HOME, ".local/state/omarchy/lock-explorer-boot-previews"
 VIDEOS = os.path.join(HOME, ".config/omarchy/lock-videos")
 BRANDING = os.path.join(HOME, ".config/omarchy/branding")
 
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 
 def ipc(*args):
     try:
@@ -23,11 +40,7 @@ def ipc(*args):
 
 
 def read(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        return None
+    return read_capped(path)
 
 
 def boot_capable():
@@ -89,7 +102,7 @@ def main():
         except ValueError:
             designs = []
     try:
-        shell = json.load(open(os.path.join(HOME, ".config/omarchy/shell.json")))
+        shell = json.loads(read_capped(os.path.join(HOME, ".config/omarchy/shell.json")) or "{}")
     except Exception:
         shell = {}
     idle = shell.get("idle") if isinstance(shell.get("idle"), dict) else {}

@@ -186,7 +186,7 @@ Item {
         Button {
           text: "Other image…"
           iconText: "󰉋"
-          tooltipText: "Any image on this laptop  ·  f"
+          tooltipText: "Any image on your computer  ·  f"
           bordered: true
           foreground: section.app.foreground
           accent: section.app.accent

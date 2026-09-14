@@ -11,6 +11,23 @@ import json, os, sys, tempfile
 
 PATH = os.path.join(os.environ.get("HOME", ""), ".config/omarchy/shell.json")
 
+# Config and theme files are read only when they are regular files (a symlink
+# to one is fine, dotfile managers use them; a FIFO or device is not), and at
+# most READ_LIMIT bytes, so a strange file cannot hang or flood the helper.
+READ_LIMIT = 1024 * 1024
+
+
+def read_capped(path, limit=READ_LIMIT):
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > limit:
+            return None
+        with open(path, encoding="utf-8") as f:
+            text = f.read(limit + 1)
+        return text if len(text) <= limit else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
 
 def main(argv):
     if len(argv) != 2 or argv[0] not in ("idle",):
@@ -23,8 +40,14 @@ def main(argv):
             print("invalid idle value", file=sys.stderr)
             return 2
     target = os.path.realpath(PATH)
-    with open(target, encoding="utf-8") as f:
-        doc = json.load(f)
+    text = read_capped(target)
+    if text is None:
+        print("shell.json is not a readable regular file", file=sys.stderr)
+        return 1
+    doc = json.loads(text)
+    if not isinstance(doc, dict):
+        print("shell.json is not an object", file=sys.stderr)
+        return 1
     if doc.get(argv[0]) == value:
         return 0
     doc[argv[0]] = value

@@ -111,7 +111,7 @@ Item {
     var job = q.shift()
     root.queue = q
     runProc.job = job
-    runProc.command = job.cmd
+    runProc.command = ["timeout", "-k", "2", "30"].concat(job.cmd)
     runProc.running = true
   }
 
@@ -136,7 +136,7 @@ Item {
 
   Process {
     id: scanProc
-    command: ["python3", root.app.pluginDir + "/scan-screens"]
+    command: ["timeout", "-k", "2", "30", "python3", root.app.pluginDir + "/scan-screens"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

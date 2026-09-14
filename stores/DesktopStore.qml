@@ -35,7 +35,7 @@ Item {
   function rescan() {
     if (!scanProc.running) scanProc.running = true
     else root.rescanPending = true
-    if (!blockProc.running) { blockProc.command = [root.app.pluginDir + "/desktop-block", "print"]; blockProc.running = true }
+    if (!blockProc.running) { blockProc.command = ["timeout", "-k", "1", "10", root.app.pluginDir + "/desktop-block", "print"]; blockProc.running = true }
   }
   property bool rescanPending: false
 
@@ -95,8 +95,8 @@ Item {
     + 'omarchy-font-set "$1" || { [ -n "$keep" ] && rm -f "$keep"; exit 1; }\n'
     + 'if [ -n "$keep" ]; then\n'
     + '  esc=$(printf "%s" "$1" | sed "s/[\\\\\\/&]/\\\\&/g")\n'
-    + '  if sed "s/family = \\"[^\\"]*\\"/family = \\"$esc\\"/g" "$keep" > "$keep.new"; then cat "$keep.new" > "$(realpath "$ala")"; fi\n'
-    + '  rm -f "$keep" "$keep.new"\n'
+    + '  new=$(mktemp) && if sed "s/family = \\"[^\\"]*\\"/family = \\"$esc\\"/g" "$keep" > "$new"; then cat "$new" > "$(realpath "$ala")"; fi\n'
+    + '  rm -f "$keep" "$new"\n'
     + 'fi\n'
     + 'if [ -n "$pt" ] && [ -f "$foot" ]; then sed -i -E "s/(:size=)[0-9.]+/\\1$pt/" "$foot"; fi\n'
 
@@ -164,7 +164,8 @@ Item {
     var job = q.shift()
     root.queue = q
     runProc.doneText = job.text
-    runProc.command = job.cmd
+    // Every command gets a deadline, so a stuck tool cannot wedge the queue.
+    runProc.command = ["timeout", "-k", "2", "30"].concat(job.cmd)
     runProc.running = true
   }
 
@@ -188,7 +189,7 @@ Item {
 
   Process {
     id: scanProc
-    command: ["python3", root.app.pluginDir + "/scan-desktop"]
+    command: ["timeout", "-k", "2", "30", "python3", root.app.pluginDir + "/scan-desktop"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -214,27 +215,36 @@ Item {
     }
   }
 
+  // Written through FileView, read through the bounded reader.
   FileView {
     id: pinsFile
     path: root.stateDir + "/pins.json"
+    preload: false
     printErrors: false
     atomicWrites: true
-    watchChanges: true
-    onFileChanged: reload()
-    onLoaded: {
-      try {
-        var parsed = JSON.parse(text())
-        var clean = {}
-        var keys = root.pinnedKeys.split(" ")
-        for (var i = 0; i < keys.length; i++)
-          if (typeof parsed[keys[i]] === "string" && parsed[keys[i]] !== "") clean[keys[i]] = parsed[keys[i]]
-        root.pins = clean
-      } catch (e) {
-        root.pins = {}
-      }
-    }
-    onLoadFailed: root.pins = {}
   }
+
+  Process {
+    id: pinsRead
+    command: ["timeout", "-k", "1", "5", root.app.pluginDir + "/read-state", root.stateDir + "/pins.json", "16384"]
+    running: true
+    stdout: StdioCollector { id: pinsOut; waitForEnd: true }
+    onExited: function(code) {
+      var clean = {}
+      if (code === 0) {
+        try {
+          var parsed = JSON.parse(pinsOut.text)
+          var keys = root.pinnedKeys.split(" ")
+          for (var i = 0; i < keys.length; i++)
+            if (typeof parsed[keys[i]] === "string" && root.validValue(parsed[keys[i]])) clean[keys[i]] = parsed[keys[i]]
+        } catch (e) { }
+      }
+      root.pins = clean
+    }
+  }
+
+  // A theme or scheme name as gsettings would hold it.
+  function validValue(v) { return /^[A-Za-z0-9._+ -]{1,80}$/.test(String(v)) }
 
   FileView {
     id: reopenFile

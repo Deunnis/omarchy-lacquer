@@ -44,7 +44,18 @@ Item {
   DesktopStore { id: desktopStore; app: root }
   NightStore { id: nightStore; app: root }
   ScreensStore { id: screensStore; app: root }
-  MenuLookStore { id: menuLookStore; app: root }
+  MenuLookStore { id: menuLookStore; app: root; Component.onCompleted: rescan() }
+
+  // Sections can appear after load (Menu look, once OmaMenu answers); keep the
+  // page the user is on rather than the index it used to have.
+  property string currentSectionId: "home"
+  onSectionsChanged: {
+    for (var i = 0; i < root.sections.length; i++) {
+      if (root.sections[i].id !== root.currentSectionId) continue
+      if (i !== root.sectionIndex) { root.lastSectionIndex = i; root.sectionIndex = i }
+      return
+    }
+  }
   AppsStore { id: appsStore; app: root }
   readonly property alias hypr: hyprStore
   readonly property alias pointerGate: pointerGateObj
@@ -108,19 +119,29 @@ Item {
     root.statusText = root.motion ? "Animations on" : "Animations off"
   }
 
+  // Written through FileView, read through the bounded reader.
   FileView {
     id: uiStateFile
     path: root.uiStatePath
+    preload: false
     printErrors: false
     atomicWrites: true
-    onLoaded: {
-      try {
-        var parsed = JSON.parse(text())
-        if (parsed && typeof parsed.motion === "boolean") root.motion = parsed.motion
-      } catch (e) { }
+  }
+
+  Process {
+    id: uiStateRead
+    command: ["timeout", "-k", "1", "5", root.pluginDir + "/read-state", root.uiStatePath, "4096"]
+    running: true
+    stdout: StdioCollector { id: uiStateOut; waitForEnd: true }
+    onExited: function(code) {
+      if (code === 0) {
+        try {
+          var parsed = JSON.parse(uiStateOut.text)
+          if (parsed && typeof parsed.motion === "boolean") root.motion = parsed.motion
+        } catch (e) { }
+      }
       root.motionLoaded = true
     }
-    onLoadFailed: root.motionLoaded = true
   }
 
   // Set for a moment after a section or sub-tab change, so the rows created
@@ -145,6 +166,7 @@ Item {
   }
 
   onSectionIndexChanged: {
+    if (root.sections[root.sectionIndex]) root.currentSectionId = root.sections[root.sectionIndex].id
     var dir = root.sectionIndex > root.lastSectionIndex ? 1 : -1
     root.lastSectionIndex = root.sectionIndex
     root.playTransition("y", dir)
@@ -184,6 +206,8 @@ Item {
   property string statusText: ""
 
   property var legacyPresent: []
+  // "Not now" on the Omaland banner, for this session.
+  property bool legacyDismissed: false
 
   property bool confirmRemove: false
 
@@ -235,6 +259,8 @@ Item {
                blurb: "Type, spacing and chrome for the bar, menus and every panel." })
     out.push({ id: "bar", group: "Shell", pane: "bar", icon: "󰞍", title: "Bar",
                blurb: "Where the bar sits, and which widgets it carries." })
+    // Needs OmaMenu with its Menu Look IPC; without it the section is left out.
+    if (menuLookStore.available)
     out.push({ id: "menulook", group: "Shell", pane: "desktop", kind: "menu", icon: "󰍜", title: "Menu look",
                blurb: "The Omarchy menu's size, corners, border and transparency, live." })
     out.push({ id: "lock", group: "Screens", pane: "desktop", kind: "lock", icon: "󰌾", title: "Lock & boot",
@@ -388,7 +414,7 @@ Item {
     toml.shellThemeFileRef.reload()
     toml.themeNameFileRef.reload()
     sjson.shellJsonFileRef.reload()
-    sjson.scanProcRef.command = ["python3", root.pluginDir + "/scan-plugins.py"]
+    sjson.scanProcRef.command = ["timeout", "-k", "2", "20", "python3", root.pluginDir + "/scan-plugins.py"]
     sjson.scanProcRef.running = true
     legacyProbe.running = true
     themeStore.rescan()
@@ -402,7 +428,7 @@ Item {
     } catch (e) { }
     if (!root.showSectionById(target)) root.showSectionById("home")
     // A pick from the wallpaper picker that Generate opened.
-    if (payload && typeof payload.aetherSource === "string" && payload.aetherSource.indexOf("/") === 0)
+    if (payload && typeof payload.aetherSource === "string" && root.isImagePath(payload.aetherSource))
       aetherStore.setSource(payload.aetherSource)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -521,10 +547,7 @@ Item {
   function removeLegacyPlugins() {
     var ids = root.legacyPresent
     if (ids.length === 0) return
-    var script = ""
-    for (var j = 0; j < ids.length; j++)
-      script += "omarchy plugin remove " + ids[j] + " --yes; "
-    removeProc.command = ["sh", "-c", script]
+    removeProc.command = ["sh", "-c", 'for id in "$@"; do omarchy plugin remove "$id" --yes; done', "lacquer-remove"].concat(ids)
     removeProc.running = true
     root.confirmRemove = false
     hypr.migrationNotice = ""
@@ -595,6 +618,13 @@ Item {
         return
       }
     })
+  }
+
+  // An absolute path to an image, with nothing odd in it. The file itself is
+  // only ever handed to aether as a single argument.
+  function isImagePath(p) {
+    return typeof p === "string" && p.length < 4096 && p.charAt(0) === "/"
+      && !/[\u0000-\u001f\u007f]/.test(p) && /\.(png|jpe?g|webp|gif|bmp)$/i.test(p)
   }
 
   function showSectionById(id) {
@@ -714,7 +744,7 @@ Item {
   Process {
     id: legacyProbe
     command: ["sh", "-c",
-      'for p in bobbynicholas.omaland deunnis.omanimate; do '
+      'for p in bobbynicholas.omaland; do '
       + '[ -d "$HOME/.config/omarchy/plugins/$p" ] && echo "$p"; done; true']
     stdout: StdioCollector {
       waitForEnd: true
@@ -829,6 +859,7 @@ Item {
           if (event.modifiers & Qt.ControlModifier) {
             if (event.key === Qt.Key_Z) { root.undo(); event.accepted = true }
             else if (event.key === Qt.Key_M) { root.setMotion(!root.motion); event.accepted = true }
+            else if (event.key === Qt.Key_I && hypr.legacyBlocks.length > 0 && !root.legacyDismissed) { hypr.importLegacy(); event.accepted = true }
             return
           }
 
@@ -947,7 +978,7 @@ Item {
               text: root.isTheme ? "omarchy theme set"
                 : root.isShuffle ? "~/.local/state/omarchy/io.github.deunnis.lacquer/shuffle.json"
                 : root.isGenerate ? "aether"
-                : root.isHome ? "every setting on this laptop, in one place"
+                : root.isHome ? "every look-and-feel setting, in one place"
                 : root.section.id === "fonts" ? "omarchy font · omarchy display text size · gsettings"
                 : root.section.id === "gtk" ? "gsettings · pins.json · hooks/theme-set.d"
                 : root.section.id === "cursor" ? "hyprctl setcursor · gsettings · hypr/autostart.lua"
@@ -1043,8 +1074,9 @@ Item {
 
         BorderSurface {
           Layout.fillWidth: true
-          Layout.preferredHeight: root.legacyPresent.length > 0 ? migrationRow.implicitHeight + Style.spacing.xxl : 0
-          visible: root.legacyPresent.length > 0
+          readonly property bool showing: !root.legacyDismissed && (hypr.legacyBlocks.length > 0 || root.legacyPresent.length > 0)
+          Layout.preferredHeight: showing ? migrationRow.implicitHeight + Style.spacing.xxl : 0
+          visible: showing
           radius: Style.cornerRadius
           color: Style.selectedFillFor(root.accent, root.accent)
           borderSpec: Border.controlSpec("normal", root.accent, root.accent)
@@ -1059,13 +1091,17 @@ Item {
             spacing: Style.spacing.lg
 
             Text {
-              width: parent.width - removeButton.width - keepButton.width - Style.spacing.lg * 2
+              width: parent.width - keepButton.width - Style.spacing.lg
+                - (importButton.visible ? importButton.width + Style.spacing.lg : 0)
+                - (removeButton.visible ? removeButton.width + Style.spacing.lg : 0)
               text: {
                 var names = root.legacyPresent.join(" and ")
-                if (root.confirmRemove) return "Remove " + names + " for good? This cannot be undone."
-                if (hypr.migrationNotice !== "") return hypr.migrationNotice + " " + names + " is now redundant."
-                return "Superseded by Lacquer and still installed: " + names
-                  + ". Opening one of them will overwrite what Lacquer writes."
+                if (root.confirmRemove) return "Uninstall " + names + "? Its settings stay in looknfeel.lua unless you imported them."
+                if (hypr.legacyBlocks.length > 0)
+                  return "Omaland settings found in looknfeel.lua. Import them to edit them here; nothing changes until you do."
+                if (hypr.migrationNotice !== "") return hypr.migrationNotice
+                  + (names ? " " + names + " is still installed and rewrites its block when opened." : "")
+                return names + " is installed too. Both write to looknfeel.lua, so opening it can undo changes made here."
               }
               color: root.foreground
               font.family: root.fontFamily
@@ -1075,8 +1111,22 @@ Item {
             }
 
             Button {
+              id: importButton
+              visible: hypr.legacyBlocks.length > 0 && !root.confirmRemove
+              text: "Import settings"
+              tooltipText: "Ctrl+I"
+              bordered: true
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.fontFamily
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: hypr.importLegacy()
+            }
+
+            Button {
               id: removeButton
-              text: root.confirmRemove ? "Yes, remove" : "Remove them"
+              visible: root.legacyPresent.length > 0
+              text: root.confirmRemove ? "Yes, uninstall" : "Uninstall Omaland"
               bordered: true
               foreground: root.foreground
               accent: root.accent
@@ -1090,7 +1140,7 @@ Item {
 
             Button {
               id: keepButton
-              text: root.confirmRemove ? "Cancel" : "Keep them"
+              text: root.confirmRemove ? "Cancel" : "Not now"
               bordered: true
               foreground: root.foreground
               accent: root.accent
@@ -1098,7 +1148,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               onClicked: {
                 if (root.confirmRemove) root.confirmRemove = false
-                else root.legacyPresent = []
+                else root.legacyDismissed = true
               }
             }
           }
@@ -1462,7 +1512,8 @@ Item {
   Process {
     id: shuffleMoveProc
     command: ["sh", "-c",
-      'omarchy plugin remove io.github.omashuffle --yes >/dev/null 2>&1 || exit 1\n'
+      'mkdir -p "$HOME/.local/state/omarchy/io.github.deunnis.lacquer" && touch "$HOME/.local/state/omarchy/io.github.deunnis.lacquer/adopt-omashuffle"\n'
+      + 'omarchy plugin remove io.github.omashuffle --yes >/dev/null 2>&1 || { rm -f "$HOME/.local/state/omarchy/io.github.deunnis.lacquer/adopt-omashuffle"; exit 1; }\n'
       + 'f="$HOME/.local/share/applications/omashuffle.desktop"\n'
       + 'if [ -f "$f" ] && grep -q "^X-OmaShuffle-Managed=true$" "$f" '
       + '&& [ ! -d "$HOME/.config/omarchy/plugins/io.github.omashuffle" ]; then rm -f "$f"; fi\n']
@@ -1483,7 +1534,12 @@ Item {
     function close(): void { root.close(); root.dismiss() }
     function toggle(): void { root.toggle() }
     function applyTheme(slug: string): void { themeStore.apply(slug) }
-    function setWallpaper(path: string): void { themeStore.setWallpaper(path) }
+    // Only a wallpaper Lacquer itself lists for the active theme.
+    function setWallpaper(path: string): void {
+      var list = themeStore.wallpapers || []
+      for (var i = 0; i < list.length; i++)
+        if (list[i].path === path) { themeStore.setWallpaper(path); return }
+    }
     function currentTheme(): string { return themeStore.current }
     function showSection(id: string): bool { return root.showSectionById(id) }
     function shuffleStatus(): string {

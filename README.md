@@ -1,6 +1,6 @@
 # Omarchy Lacquer
 
-One app for how this laptop looks.
+One app for how your Omarchy desktop looks.
 
 | Group | Sections |
 |---|---|
@@ -11,10 +11,56 @@ One app for how this laptop looks.
 | Screens | Lock & boot · Screensaver |
 | Apps | Terminals · btop & prompt · Plugins |
 
+## Install
+
+    omarchy plugin add https://github.com/Deunnis/omarchy-lacquer --enable
+
+Then open **Omarchy Lacquer** from the app launcher (`Super + Space`); the plugin
+adds its own launcher entry. From a terminal or a keybinding:
+
     omarchy-shell shell toggle io.github.deunnis.lacquer
     omarchy-shell shell summon io.github.deunnis.lacquer '{"section":"cursor"}'
 
-or launch **Lacquer** from the app launcher; it installs its own entry.
+Update with `omarchy plugin update io.github.deunnis.lacquer`.
+
+**What happens without you changing anything:** enabling the plugin adds its
+launcher entry and a theme-switch hook (which does nothing until you pin a GTK
+or icon choice). The first time the app opens it copies `looknfeel.lua`,
+`shell.toml` and `shell.json` to `*.lacquer-backup-<time>`. Beyond that, only
+a change you make writes anything, and the theme shuffle is off until you
+turn it on.
+
+### Requirements
+
+- **Omarchy 4** (Quattro), with its Lua Hyprland config.
+- Everything else Lacquer calls ships with Omarchy: `aether`, `jq`, `lua`,
+  `python3`, `libvips`, `gsettings`, `hyprsunset`.
+
+Optional, for one section each:
+
+| Plugin | Adds |
+|---|---|
+| [lock-explorer](https://github.com/SirJul1337/omarchy-lock-explorer) | **Lock & boot**: designs, unlock animation, clock, boot screen. Without it the section says so. |
+| [OmaMenu](https://github.com/Deunnis/OmaMenu) with Menu Look IPC | **Menu look**. Without it the section is not shown. |
+| [OmaShuffle](https://github.com/Deunnis/OmaShuffle) | Nothing extra: while it is installed, Lacquer's Shuffle stays out of its way. |
+
+## Remove
+
+Lacquer's changes are ordinary config, so removing the plugin alone leaves
+them in effect. To undo them first:
+
+    ~/.config/omarchy/plugins/io.github.deunnis.lacquer/lacquer-cleanup         # shows what it would undo
+    ~/.config/omarchy/plugins/io.github.deunnis.lacquer/lacquer-cleanup --yes   # undoes it
+    omarchy plugin remove io.github.deunnis.lacquer
+
+`lacquer-cleanup` removes Lacquer's blocks from `looknfeel.lua`, `hyprland.lua`
+and `autostart.lua`, puts back Omarchy's `hyprsunset.conf` if Lacquer wrote
+one, unpins GTK and icon choices, resets a saved cursor, and deletes its hook,
+launcher entry and state. It lists, and leaves alone, what are ordinary
+settings elsewhere: `shell.toml`/`shell.json` values, fonts and text size,
+terminal/btop/starship lines, lock-explorer and OmaMenu settings, and the
+backups. Skipping it is fine too: the launcher entry goes when the plugin is
+disabled, and the hook deletes itself at the next theme switch.
 
 Lacquer writes almost nothing itself. Wherever a tool already owns a setting —
 `omarchy theme set`, `omarchy font set`, gsettings, `hyprctl`, aether's CLI,
@@ -39,8 +85,8 @@ Lacquer opens on **Home** (a `section` in the summon payload opens elsewhere):
 - **Every section with what it is set to right now**, in cards that rise in
   when Home opens.
 
-Everything moving is paused whenever Home is not on screen. Measured on this
-laptop, any animation that runs at the display rate without pause costs about
+Everything moving is paused whenever Home is not on screen. Measured on a
+Ryzen 5 4500U laptop, any animation that runs at the display rate without pause costs about
 12 % of a core, whatever it draws, so the drift and ripple are stepped at ~15
 frames a second, the caret blinks without fading, and the miniature rests a
 few seconds between re-tiles: Home costs about 7 % of one core while open.
@@ -60,20 +106,18 @@ more than a closed panel. Two things are not covered: the curve preview's Play
 button (it is the feature), and the hover fades built into Omarchy's own
 buttons, which Lacquer does not own.
 
-## What it replaces
+## Coming from Omaland or OmaShuffle
 
-Lacquer supersedes two plugins and adopts their settings on first run:
+**[Omaland](https://github.com/bobby-nicholas/omaland)** also writes look and
+feel into `looknfeel.lua`. When Lacquer finds Omaland's block it shows a banner
+and does nothing else. **Import settings** (`Ctrl+I`) copies Omaland's values into
+Lacquer's own block (on top of anything already set in Lacquer) and removes
+Omaland's block. **Uninstall Omaland** asks again before running
+`omarchy plugin remove`. **Not now** hides the banner for the session. Keeping
+both installed works, but for a setting both of them change, whichever block
+comes later in `looknfeel.lua` is the one Hyprland uses.
 
-| | |
-|---|---|
-| [Omaland](https://github.com/bobby-nicholas/omaland) | gaps, corners, opacity, dimming, blur, shadow, glow, groups |
-| Omanimate | animation leaves and bezier curves |
-
-On first open it reads both of their managed blocks, adopts every value, writes
-one `lacquer` block and removes their fences. Your desktop is unchanged. It
-then offers to uninstall them — and **only ever offers**: nothing is removed
-without you pressing the button and confirming. Until they are gone a banner
-stays up, because opening either one will overwrite what Lacquer writes.
+**[OmaShuffle](https://github.com/Deunnis/OmaShuffle)**: see Shuffle below.
 
 ## How changes apply
 
@@ -127,8 +171,10 @@ works with Lacquer closed. State lives in
 **While `io.github.omashuffle` is installed, Lacquer's engine stays dormant**
 so the two never both switch the theme on the same boot or sunset. The
 section's "Move to Lacquer" button removes OmaShuffle — only when pressed and
-confirmed — and the engine adopts its state, including the last boot id, so
-the restart that follows is not counted as a boot.
+confirmed — and only then does the engine adopt its state, including the last
+boot id, so the restart that follows is not counted as a boot. Uninstalling
+OmaShuffle any other way does not switch the shuffle on in Lacquer. On a fresh
+install the shuffle is **off** until you turn it on.
 
 Two upstream quirks are fixed in the copy: a manual latitude of `null` no
 longer becomes 0, and a theme applied from outside the engine now clears a
@@ -193,8 +239,9 @@ fresh read, touching only that key. Screensaver and About art use
 
 ## Menu look
 
-omamenu's size, corners, border and transparency, set through an `omamenu` IPC
-target that the local branch `local-look-ipc` of `io.github.omamenu` adds. The
+OmaMenu's size, corners, border and transparency, set through an `omamenu` IPC
+target (`look`, `setLook`, `resetLook`) in `io.github.omamenu`. The section only
+appears when OmaMenu answers on it. The
 menu keeps its own file and write guarantees; Lacquer only sends values. Menu
 look's transparency replaces Shell style's `[menu] background-alpha` while it
 is above 0 %.
@@ -353,6 +400,7 @@ already exist.
 | `P` | play the curve preview |
 | `Ctrl+Z` | undo |
 | `Ctrl+M` | app animations on/off |
+| `Ctrl+I` | import Omaland's settings, while its banner is showing |
 | `Esc` | close |
 
 Hovering a row moves the keyboard cursor to it.
@@ -371,7 +419,7 @@ so the plugin directory comes from `Qt.resolvedUrl(".")` instead.
 
 | | |
 |---|---|
-| `Panel.qml` | the app: state, live preview, persistence, undo, migration |
+| `Panel.qml` | the app: state, live preview, persistence, undo, Omaland import |
 | `ConfigRow.qml` | one look-and-feel option |
 | `LeafRow.qml` | one animation leaf |
 | `CurveEditor.qml` | the bezier graph and play strip |
@@ -395,6 +443,7 @@ so the plugin directory comes from `Qt.resolvedUrl(".")` instead.
 | `app-config` | terminal, btop and starship line edits |
 | `shell-json-set` | one top-level `shell.json` key from a fresh read |
 | `lacquer-reapply.hook` | copied into `hooks/theme-set.d/` |
+| `lacquer-cleanup` | undoes Lacquer's changes before removal |
 
 ## Credits
 
