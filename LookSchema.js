@@ -237,7 +237,7 @@ var SECTIONS = [
 // Shown at the top of the Animations section, above the per-leaf editor.
 var ANIMATION_MASTER = group("Master", [
   item("animations:enabled", "Animations", "Master switch for every animation.", "bool"),
-  item("animations:workspace_wraparound", "Wrap workspaces", "Slide the short way when moving between the first and last workspace.", "bool",
+  item("animations:workspace_wraparound", "Wrap workspaces", "Slide the short way between your lowest and highest open workspace. Hyprland only counts workspaces that exist, so with just two open every switch between them wraps and slides the wrong way.", "bool",
        { needs: "animations:enabled" })
 ])
 
