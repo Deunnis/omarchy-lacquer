@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+
+# List installed Omarchy themes with a palette and a preview image (read-only).
+#
+# Adapted from OmaShuffle's omashuffle-scan-themes (same author, MIT). Added here:
+# `hasColors`, so a theme folder with no colors.toml can be hidden rather than
+# applied as a broken theme; and `preview`, found the way omarchy-theme-switcher's
+# find_preview does it.
+#
+# Emits a JSON array, one object per installed theme:
+#   {"slug","source"("user"|"system"),"display","mode"("dark"|"light"),
+#    "accent","background","foreground","colors":[hex,...],
+#    "hasColors":bool, "preview":path|""}
+#
+# Themes are read from the two standard locations; a user theme shadows a system
+# theme with the same slug. Every read is bounded and descriptor-safe: a theme
+# (which may be an installed third-party repo) cannot make this block or grow the
+# shell. Nothing here executes or writes anything. On any trouble it prints "[]".
+
+import json
+import os
+import re
+import signal
+import stat
+import sys
+
+MAX_THEMES = 500          # far above any real installed-theme count
+MAX_SLUG = 128            # matches omarchy-theme-set's own id length cap
+MAX_COLORS_BYTES = 65536  # a colors.toml is a few hundred bytes; this is generous
+DEADLINE_SEC = 10
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+HEX_LINE_RE = re.compile(r'^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"(#[0-9A-Fa-f]{3,8})"', re.M)
+MODE_LINE_RE = re.compile(r'^[ \t]*mode[ \t]*=[ \t]*"(dark|light)"', re.M | re.I)
+SWATCH_KEYS = ("red", "green", "blue", "yellow", "magenta", "cyan")
+
+
+def _give_up(*_):
+    sys.stdout.write("[]\n")
+    os._exit(0)
+
+
+def read_palette(path):
+    """Read at most MAX_COLORS_BYTES from a regular file, never following a
+    symlink and never blocking on a FIFO. Returns {key: hex}."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return {}
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return {}
+        chunks, total = [], 0
+        while total < MAX_COLORS_BYTES:
+            try:
+                b = os.read(fd, MAX_COLORS_BYTES - total)
+            except (BlockingIOError, OSError):
+                break
+            if not b:
+                break
+            chunks.append(b)
+            total += len(b)
+    finally:
+        os.close(fd)
+    text = b"".join(chunks).decode("utf-8", "replace")
+    out = {}
+    for key, value in HEX_LINE_RE.findall(text):
+        out.setdefault(key, value)
+    m = MODE_LINE_RE.search(text)
+    if m:
+        out["mode"] = m.group(1).lower()
+    return out
+
+
+def display_name(slug):
+    return " ".join(w.capitalize() for w in re.split(r"[-_]", slug) if w)
+
+
+def theme_mode(palette):
+    """The theme's own `mode` key when it has one, else inferred from the
+    perceived luminance of its background colour. Defaults to "dark"."""
+    mode = palette.get("mode", "")
+    if mode in ("dark", "light"):
+        return mode
+    m = re.match(r"^#?([0-9A-Fa-f]{6})$", palette.get("background", "") or "")
+    if not m:
+        return "dark"
+    v = int(m.group(1), 16)
+    r, g, b = (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF
+    return "light" if (0.2126 * r + 0.7152 * g + 0.0722 * b) > 128 else "dark"
+
+
+IMAGE_EXTS = ("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
+
+def find_preview(themedir, system_twin):
+    """omarchy-theme-switcher's order: preview.<ext> in the theme, then the first
+    sorted image in its backgrounds/, then the built-in theme of the same name."""
+    for d in (themedir, system_twin):
+        if not d or not os.path.isdir(d):
+            continue
+        for ext in IMAGE_EXTS:
+            p = os.path.join(d, "preview." + ext)
+            if os.path.isfile(p):
+                return p
+        bg = os.path.join(d, "backgrounds")
+        try:
+            imgs = sorted(n for n in os.listdir(bg)
+                          if n.lower().rsplit(".", 1)[-1] in IMAGE_EXTS)
+        except OSError:
+            imgs = []
+        if imgs:
+            return os.path.join(bg, imgs[0])
+    return ""
+
+
+def main():
+    signal.signal(signal.SIGALRM, _give_up)
+    signal.alarm(DEADLINE_SEC)
+
+    home = os.environ.get("HOME", "")
+    omarchy_path = os.environ.get("OMARCHY_PATH", "/usr/share/omarchy")
+    sources = [
+        (os.path.join(home, ".config", "omarchy", "themes"), "user"),
+        (os.path.join(omarchy_path, "themes"), "system"),
+    ]
+
+    themes = []
+    seen = set()
+    for base, source in sources:
+        try:
+            names = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for name in names:
+            if len(themes) >= MAX_THEMES:
+                break
+            if len(name) > MAX_SLUG or not SLUG_RE.match(name) or name in seen:
+                continue
+            themedir = os.path.join(base, name)
+            if not os.path.isdir(themedir):
+                continue
+            seen.add(name)
+            colors_path = os.path.join(themedir, "colors.toml")
+            palette = read_palette(colors_path)
+            twin = os.path.join(omarchy_path, "themes", name) if source == "user" else ""
+            themes.append({
+                "slug": name,
+                "source": source,
+                "display": display_name(name),
+                "mode": theme_mode(palette),
+                "accent": palette.get("accent", ""),
+                "background": palette.get("background", ""),
+                "foreground": palette.get("foreground", ""),
+                "colors": [palette[k] for k in SWATCH_KEYS if k in palette],
+                "hasColors": os.path.isfile(colors_path),
+                "preview": find_preview(themedir, twin),
+            })
+
+    json.dump(themes, sys.stdout, separators=(",", ":"))
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        sys.stdout.write("[]\n")
+        sys.exit(0)

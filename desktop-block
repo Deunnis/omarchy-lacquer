@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Own Lacquer's desktop block in ~/.config/hypr/autostart.lua.
+
+The block carries what has to outlive a Hyprland restart and has no other
+home: the cursor theme environment and the nightlight autostart. It lives in
+autostart.lua rather than hyprland.lua so it never shares a file with the
+window-rule block HyprStore rewrites from its own in-memory copy.
+
+  desktop-block print
+  desktop-block set [--cursor THEME SIZE | --no-cursor] [--sunset on|off]
+
+Lines inside the fences that this script does not recognise are kept, so a
+hand edit survives the next rewrite. The file is replaced atomically.
+"""
+import json, os, re, sys, tempfile
+
+PATH = os.path.join(os.environ.get("HOME", ""), ".config/hypr/autostart.lua")
+BEGIN = "-- >>> lacquer desktop block >>>"
+END = "-- <<< lacquer desktop block <<<"
+HEADER = ("-- Written by Lacquer: cursor theme and nightlight autostart. Safe to\n"
+          "-- hand-edit; Lacquer only ever rewrites what's between the fences.")
+ENV_RE = re.compile(r'^\s*hl\.env\(\s*"(XCURSOR_THEME|XCURSOR_SIZE|HYPRCURSOR_THEME|HYPRCURSOR_SIZE)"\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)\s*$')
+SUNSET_RE = re.compile(r'^\s*o\.launch_on_start\(\s*"hyprsunset"\s*\)\s*$')
+
+
+def lua_string(s):
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def read():
+    try:
+        with open(PATH, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+def split(text):
+    b = text.find(BEGIN)
+    if b == -1:
+        return None
+    e = text.find(END, b)
+    if e == -1:
+        return None
+    return text[:b], text[b + len(BEGIN):e], text[e + len(END):]
+
+
+def parse(body):
+    env, sunset, extra = {}, False, []
+    for line in body.splitlines():
+        if not line.strip() or line.strip() in HEADER.splitlines():
+            continue
+        m = ENV_RE.match(line)
+        if m:
+            env[m.group(1)] = m.group(2).replace('\\"', '"').replace("\\\\", "\\")
+        elif SUNSET_RE.match(line):
+            sunset = True
+        else:
+            extra.append(line)
+    cursor = None
+    if env.get("XCURSOR_THEME"):
+        try:
+            size = int(env.get("XCURSOR_SIZE", "24"))
+        except ValueError:
+            size = 24
+        cursor = {"theme": env["XCURSOR_THEME"], "size": size}
+    return {"cursor": cursor, "sunset": sunset, "extra": extra}
+
+
+def render(state):
+    lines = []
+    if state["cursor"]:
+        t, s = state["cursor"]["theme"], str(int(state["cursor"]["size"]))
+        lines += ['hl.env("XCURSOR_THEME", %s)' % lua_string(t),
+                  'hl.env("XCURSOR_SIZE", %s)' % lua_string(s),
+                  'hl.env("HYPRCURSOR_THEME", %s)' % lua_string(t),
+                  'hl.env("HYPRCURSOR_SIZE", %s)' % lua_string(s)]
+    if state["sunset"]:
+        lines.append('o.launch_on_start("hyprsunset")')
+    lines += state["extra"]
+    return lines
+
+
+def write(text):
+    target = os.path.realpath(PATH)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".autostart.", dir=os.path.dirname(target))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        if os.path.exists(target):
+            os.chmod(tmp, os.stat(target).st_mode & 0o777)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def main(argv):
+    text = read()
+    parts = split(text)
+    state = parse(parts[1]) if parts else {"cursor": None, "sunset": False, "extra": []}
+    if not argv or argv[0] == "print":
+        print(json.dumps(state))
+        return 0
+    if argv[0] != "set":
+        print(__doc__, file=sys.stderr)
+        return 2
+    args = argv[1:]
+    while args:
+        flag = args.pop(0)
+        if flag == "--cursor" and len(args) >= 2:
+            theme, size = args.pop(0), args.pop(0)
+            if not re.match(r"^[A-Za-z0-9._+ -]{1,80}$", theme) or not size.isdigit() or not 8 <= int(size) <= 128:
+                print("invalid cursor", file=sys.stderr)
+                return 2
+            state["cursor"] = {"theme": theme, "size": int(size)}
+        elif flag == "--no-cursor":
+            state["cursor"] = None
+        elif flag == "--sunset" and args and args[0] in ("on", "off"):
+            state["sunset"] = args.pop(0) == "on"
+        else:
+            print("unknown argument: " + flag, file=sys.stderr)
+            return 2
+    lines = render(state)
+    if parts:
+        before, _, after = parts
+        if lines:
+            nxt = before + BEGIN + "\n" + HEADER + "\n" + "\n".join(lines) + "\n" + END + after
+        else:
+            nxt = before.rstrip("\n") + "\n" + after.lstrip("\n")
+            if not after.strip():
+                nxt = before.rstrip("\n") + "\n"
+    else:
+        if not lines:
+            return 0
+        head = text if not text or text.endswith("\n") else text + "\n"
+        nxt = head + "\n" + BEGIN + "\n" + HEADER + "\n" + "\n".join(lines) + "\n" + END + "\n"
+    if nxt != text:
+        write(nxt)
+    print(json.dumps(state))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

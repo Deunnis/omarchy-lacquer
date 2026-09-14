@@ -1,0 +1,28 @@
+#!/bin/bash
+# X-Lacquer-Managed=true
+#
+# Installed by Lacquer into ~/.config/omarchy/hooks/theme-set.d/. Every theme
+# switch resets the GTK theme, colour scheme and icon theme to what the theme
+# asks for (omarchy-theme-set-gnome). This puts back only the ones pinned in
+# Lacquer, after those follow-up commands have finished.
+
+plugin="$HOME/.config/omarchy/plugins/io.github.deunnis.lacquer"
+pins="$HOME/.local/state/omarchy/io.github.deunnis.lacquer/pins.json"
+
+# Lacquer was removed: stop acting on its pins and clean up after it.
+if [[ ! -d $plugin ]]; then
+  rm -f -- "${BASH_SOURCE[0]}"
+  exit 0
+fi
+
+[[ -f $pins ]] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+
+for key in color-scheme gtk-theme icon-theme; do
+  value=$(jq -r --arg k "$key" '.[$k] // empty | strings' "$pins" 2>/dev/null)
+  if [[ -n $value ]]; then
+    gsettings set org.gnome.desktop.interface "$key" "$value" 2>/dev/null
+  fi
+done
+
+exit 0

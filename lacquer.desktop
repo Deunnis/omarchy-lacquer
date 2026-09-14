@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Omarchy Lacquer
+GenericName=Omarchy Lacquer
+Comment=Gaps, corners, opacity, blur, shadow, glow and animations, with live preview
+Exec=omarchy-shell shell toggle io.github.deunnis.lacquer
+TryExec=omarchy-shell
+Icon=@ICON@
+Terminal=false
+StartupNotify=false
+Categories=Settings;DesktopSettings;
+Keywords=hyprland;omarchy;style;gaps;blur;opacity;animations;rounding;shadow;glow;bezier;
+X-Lacquer-Managed=true

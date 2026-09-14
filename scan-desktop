@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Report the desktop's font, GTK, icon and cursor settings (read-only).
+
+Emits one JSON object for Lacquer's Desktop sections: current values from
+gsettings and Omarchy's own commands, what the active theme would set on its
+own (so a pin can say what it is overriding), and the choices installed on
+this machine, with a few preview icons per icon theme.
+"""
+import configparser, json, os, re, subprocess
+
+HOME = os.environ.get("HOME", "")
+SCHEMA = "org.gnome.desktop.interface"
+ICON_ROOTS = [os.path.join(HOME, ".local/share/icons"), os.path.join(HOME, ".icons"), "/usr/share/icons"]
+THEME_ROOTS = [os.path.join(HOME, ".local/share/themes"), os.path.join(HOME, ".themes"), "/usr/share/themes"]
+PREVIEW_ICONS = [
+    ["folder", "inode-directory"],
+    ["user-home", "folder-home"],
+    ["utilities-terminal", "org.gnome.Terminal", "terminal"],
+    ["preferences-system", "org.gnome.Settings", "preferences-desktop"],
+    ["user-trash", "user-trash-full"],
+    ["text-x-generic", "text-plain"],
+]
+SIZE_ORDER = ["48x48", "scalable", "64x64", "256x256", "32x32", "48x48@2x", "24x24@2x", "24x24"]
+
+
+def run(cmd, timeout=10):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
+    except Exception:
+        return ""
+
+
+def gget(key):
+    out = run(["gsettings", "get", SCHEMA, key]).strip()
+    if out.startswith("'") and out.endswith("'"):
+        return out[1:-1]
+    if out.startswith("uint32 "):
+        out = out[7:]
+    return out
+
+
+def find_theme_dir(name, roots):
+    for root in roots:
+        path = os.path.join(root, name)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
+def icon_index(path):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read(os.path.join(path, "index.theme"), encoding="utf-8")
+        return parser["Icon Theme"]
+    except Exception:
+        return {}
+
+
+def is_icon_theme(path):
+    # A theme that only carries cursors, or only inherits, has nothing to show.
+    try:
+        entries = [e for e in os.listdir(path) if os.path.isdir(os.path.join(path, e)) and e != "cursors"]
+    except OSError:
+        return False
+    return bool(entries) and os.path.isfile(os.path.join(path, "index.theme"))
+
+
+def lookup_icon(theme, names, seen=None):
+    seen = seen or set()
+    if theme in seen or len(seen) > 6:
+        return ""
+    seen.add(theme)
+    path = find_theme_dir(theme, ICON_ROOTS)
+    if not path:
+        return ""
+    sizes = [s for s in SIZE_ORDER if os.path.isdir(os.path.join(path, s))]
+    for size in sizes:
+        base = os.path.join(path, size)
+        try:
+            contexts = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for name in names:
+            for ctx in contexts:
+                for ext in (".svg", ".png"):
+                    candidate = os.path.join(base, ctx, name + ext)
+                    if os.path.isfile(candidate):
+                        return candidate
+    for parent in str(icon_index(path).get("Inherits", "")).split(","):
+        parent = parent.strip()
+        if parent and parent != "hicolor":
+            found = lookup_icon(parent, names, seen)
+            if found:
+                return found
+    return ""
+
+
+def icon_themes():
+    names, out = set(), []
+    for root in ICON_ROOTS:
+        try:
+            entries = sorted(os.listdir(root), key=str.lower)
+        except OSError:
+            continue
+        for entry in entries:
+            path = os.path.join(root, entry)
+            if entry in names or entry in ("default", "hicolor", "locolor") or not is_icon_theme(path):
+                continue
+            index = icon_index(path)
+            # Adwaita marks itself Hidden, yet it is GNOME's own default set.
+            if str(index.get("Hidden", "")).lower() == "true" and entry != "Adwaita":
+                continue
+            names.add(entry)
+            out.append({
+                "name": entry,
+                "label": str(index.get("Name", entry)),
+                "icons": [p for p in (lookup_icon(entry, n) for n in PREVIEW_ICONS) if p],
+            })
+    out.sort(key=lambda t: t["name"].lower())
+    return out
+
+
+def cursor_themes():
+    names = set()
+    for root in ICON_ROOTS:
+        try:
+            for entry in os.listdir(root):
+                if os.path.isdir(os.path.join(root, entry, "cursors")):
+                    names.add(entry)
+        except OSError:
+            pass
+    return sorted(names, key=str.lower)
+
+
+def gtk_themes():
+    names = set()
+    for root in THEME_ROOTS:
+        try:
+            for entry in os.listdir(root):
+                path = os.path.join(root, entry)
+                if os.path.isdir(os.path.join(path, "gtk-3.0")) or os.path.isdir(os.path.join(path, "gtk-4.0")):
+                    names.add(entry)
+        except OSError:
+            pass
+    return sorted(names, key=str.lower)
+
+
+def ui_fonts():
+    out = run(["fc-list", ":style=Regular", "-f", "%{family[0]}\n"])
+    families = {line.strip() for line in out.splitlines() if line.strip()}
+    return sorted((f for f in families if not re.search(r"emoji|signwriting|omarchy", f, re.I)), key=str.lower)
+
+
+def split_font(value):
+    m = re.match(r"^(.*?)\s+(\d+(?:\.\d+)?)$", value or "")
+    if not m:
+        return {"family": value or "", "size": 11}
+    return {"family": m.group(1), "size": float(m.group(2))}
+
+
+def text_size():
+    out = run(["omarchy-display-text-size"])
+    m = re.search(r"text size:\s*(\d+)", out)
+    pt = re.search(r"terminal font:\s*(\d+)", out)
+    return {"px": int(m.group(1)) if m else None, "terminalPt": int(pt.group(1)) if pt else None}
+
+
+def theme_follows():
+    state = os.path.join(HOME, ".local/state/omarchy/current/theme")
+    mode = run(["omarchy-theme-color", "--file", os.path.join(state, "colors.toml"), "mode"]).strip()
+    icons = "Yaru-blue"
+    try:
+        with open(os.path.join(state, "icons.theme")) as f:
+            icons = f.read().strip() or icons
+    except OSError:
+        pass
+    light = mode == "light"
+    return {
+        "color-scheme": "prefer-light" if light else "prefer-dark",
+        "gtk-theme": "Adwaita" if light else "Adwaita-dark",
+        "icon-theme": icons,
+    }
+
+
+def main():
+    mono = [l.strip() for l in run(["omarchy-font-list"]).splitlines() if l.strip()]
+    print(json.dumps({
+        "mono": {"current": run(["omarchy-font-current"]).strip(), "list": mono},
+        "text": text_size(),
+        "ui": split_font(gget("font-name")),
+        "gsettings": {
+            "gtk-theme": gget("gtk-theme"),
+            "icon-theme": gget("icon-theme"),
+            "color-scheme": gget("color-scheme"),
+            "cursor-theme": gget("cursor-theme"),
+            "cursor-size": int(gget("cursor-size") or 24),
+        },
+        "follows": theme_follows(),
+        "gtkThemes": gtk_themes(),
+        "iconThemes": icon_themes(),
+        "cursorThemes": cursor_themes(),
+        # "default" is a pointer, not a theme: it names whatever it inherits.
+        "cursorDefault": str(icon_index(find_theme_dir("default", ICON_ROOTS) or "").get("Inherits", "")).split(",")[0].strip(),
+        "uiFonts": ui_fonts(),
+    }))
+
+
+if __name__ == "__main__":
+    main()

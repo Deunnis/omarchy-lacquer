@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Nightlight for Lacquer: hyprsunset's schedule and its temperature right now.
+
+  nightlight print
+  nightlight schedule on HH:MM HH:MM KELVIN [--replace]   (morning, evening, warmth)
+  nightlight schedule off
+  nightlight now KELVIN | off
+
+A schedule is written to ~/.config/hypr/hyprsunset.conf as two profiles: normal
+colours from the morning time, a warmer screen from the evening time. Turning
+it off puts Omarchy's shipped default back byte-for-byte. hyprsunset reads the
+file only at start, so it is restarted after a change, and it is added to
+Lacquer's autostart block, because nothing launches it on a stock install.
+
+A file Lacquer did not write in its two-profile shape is left alone unless
+--replace is passed; the replaced file is kept beside it as a backup.
+"""
+import json, os, re, subprocess, sys, tempfile, time
+
+HOME = os.environ.get("HOME", "")
+OMARCHY = os.environ.get("OMARCHY_PATH") or "/usr/share/omarchy"
+CONF = os.path.join(HOME, ".config/hypr/hyprsunset.conf")
+DEFAULT = os.path.join(OMARCHY, "config/hypr/hyprsunset.conf")
+HYPR_DIR = os.path.join(HOME, ".config/hypr")
+HERE = os.path.dirname(os.path.realpath(__file__))
+OFF_TEMP = 6500
+PROFILE_RE = re.compile(r"profile\s*\{([^}]*)\}", re.S)
+TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def write_atomic(path, text):
+    target = os.path.realpath(path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".hyprsunset.", dir=os.path.dirname(target))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    if os.path.exists(target):
+        os.chmod(tmp, os.stat(target).st_mode & 0o777)
+    os.replace(tmp, target)
+
+
+def strip_comments(text):
+    return "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+
+
+def parse(text):
+    """Return (schedule, custom). schedule is None when there is no warm profile."""
+    if text is None:
+        return None, False
+    profiles = []
+    for body in PROFILE_RE.findall(strip_comments(text)):
+        keys = {}
+        for line in body.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                keys[k.strip()] = v.strip()
+        profiles.append(keys)
+    rest = PROFILE_RE.sub("", strip_comments(text)).strip()
+    identity = [p for p in profiles if p.get("identity") == "true" and set(p) == {"time", "identity"}]
+    warm = [p for p in profiles if set(p) == {"time", "temperature"} and p["temperature"].isdigit()]
+    simple = not rest and len(identity) == 1 and len(warm) <= 1 and len(identity) + len(warm) == len(profiles)
+    simple = simple and all(TIME_RE.match(p.get("time", "")) for p in profiles)
+    if not simple:
+        return None, True
+    if not warm:
+        return None, False
+    return {"morning": identity[0]["time"], "evening": warm[0]["time"],
+            "temperature": int(warm[0]["temperature"])}, False
+
+
+def render(morning, evening, temp):
+    return ("# Written by Lacquer. Normal colours from the morning time, a warmer\n"
+            "# screen from the evening time. hyprsunset reads this when it starts.\n"
+            "profile {\n    time = %s\n    identity = true\n}\n\n"
+            "profile {\n    time = %s\n    temperature = %d\n}\n") % (morning, evening, temp)
+
+
+def run(cmd, **kw):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=kw.get("timeout", 10))
+    except Exception:
+        return None
+
+
+def running():
+    r = run(["pgrep", "-x", "hyprsunset"])
+    return bool(r and r.returncode == 0)
+
+
+def temperature():
+    r = run(["hyprctl", "hyprsunset", "temperature"])
+    if not r or r.returncode != 0:
+        return None
+    m = re.search(r"\d+", r.stdout)
+    return int(m.group(0)) if m else None
+
+
+def autostart_elsewhere():
+    """A launch_on_start("hyprsunset") the user wrote outside Lacquer's block."""
+    pat = re.compile(r'^\s*o\.launch_on_start\(\s*"hyprsunset"\s*\)', re.M)
+    try:
+        names = sorted(n for n in os.listdir(HYPR_DIR) if n.endswith(".lua"))
+    except OSError:
+        return False
+    for name in names:
+        text = read(os.path.join(HYPR_DIR, name)) or ""
+        b = text.find("-- >>> lacquer desktop block >>>")
+        e = text.find("-- <<< lacquer desktop block <<<")
+        if b != -1 and e != -1:
+            text = text[:b] + text[e:]
+        if pat.search(text):
+            return True
+    return False
+
+
+def block(*args):
+    r = run([os.path.join(HERE, "desktop-block")] + list(args))
+    if not r or r.returncode != 0:
+        raise SystemExit("could not update the autostart block")
+    return json.loads(r.stdout or "{}")
+
+
+def launch():
+    subprocess.Popen(["setsid", "uwsm-app", "--", "hyprsunset"], stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def wait_for(alive, seconds):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if running() == alive:
+            return True
+        time.sleep(0.1)
+    return running() == alive
+
+
+def restart():
+    # pkill returns before hyprsunset has let go of the display, and a new
+    # instance started in that window exits at once. Wait for the old one to
+    # be gone, then make sure the new one stayed up.
+    subprocess.run(["pkill", "-x", "hyprsunset"], capture_output=True)
+    if not wait_for(False, 3):
+        subprocess.run(["pkill", "-9", "-x", "hyprsunset"], capture_output=True)
+        wait_for(False, 1)
+    for _ in range(2):
+        launch()
+        if wait_for(True, 3):
+            time.sleep(0.8)
+            if running():
+                return
+    print("hyprsunset did not stay running", file=sys.stderr)
+
+
+def refresh_bar():
+    run(["omarchy-shell", "-q", "nightlight", "refresh"], timeout=3)
+
+
+def status():
+    schedule, custom = parse(read(CONF))
+    auto = block("print").get("sunset", False)
+    return {
+        "schedule": schedule,
+        "custom": custom,
+        "autostart": bool(auto),
+        "autostartElsewhere": autostart_elsewhere(),
+        "running": running(),
+        "temperature": temperature(),
+    }
+
+
+def main(argv):
+    if not argv or argv[0] == "print":
+        print(json.dumps(status()))
+        return 0
+
+    if argv[0] == "now" and len(argv) == 2:
+        target = OFF_TEMP if argv[1] == "off" else int(argv[1]) if argv[1].isdigit() else -1
+        if not 1000 <= target <= 20000:
+            print("temperature out of range", file=sys.stderr)
+            return 2
+        if not running():
+            launch()
+            wait_for(True, 3)
+        # A freshly started hyprsunset applies its own default at the end of its
+        # boot, so resend until it sticks (as omarchy-toggle-nightlight does).
+        for _ in range(15):
+            run(["hyprctl", "hyprsunset", "temperature", str(target)])
+            time.sleep(0.2)
+            if temperature() == target:
+                break
+        refresh_bar()
+        print(json.dumps(status()))
+        return 0
+
+    if argv[0] == "schedule" and len(argv) >= 2:
+        text = read(CONF)
+        schedule, custom = parse(text)
+        replace = "--replace" in argv
+        if custom and not replace:
+            print("hyprsunset.conf was written by hand; pass --replace", file=sys.stderr)
+            return 3
+        if custom and text is not None:
+            with open(CONF + ".lacquer-backup-%d" % int(time.time()), "w", encoding="utf-8") as f:
+                f.write(text)
+        was = schedule is not None
+        if argv[1] == "on" and len(argv) >= 5:
+            morning, evening, temp = argv[2], argv[3], argv[4]
+            if not TIME_RE.match(morning) or not TIME_RE.match(evening) or morning == evening:
+                print("invalid times", file=sys.stderr)
+                return 2
+            if not temp.isdigit() or not 1000 <= int(temp) <= 6500:
+                print("invalid temperature", file=sys.stderr)
+                return 2
+            nxt = render(morning, evening, int(temp))
+            if nxt != text:
+                write_atomic(CONF, nxt)
+            if not autostart_elsewhere():
+                block("set", "--sunset", "on")
+            restart()
+        elif argv[1] == "off":
+            default = read(DEFAULT)
+            if default is None:
+                print("Omarchy's default hyprsunset.conf is missing", file=sys.stderr)
+                return 1
+            if default != text:
+                write_atomic(CONF, default)
+            block("set", "--sunset", "off")
+            # Only a running hyprsunset needs to learn the schedule is gone.
+            if was and running():
+                restart()
+        else:
+            print(__doc__, file=sys.stderr)
+            return 2
+        time.sleep(0.4)
+        refresh_bar()
+        print(json.dumps(status()))
+        return 0
+
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

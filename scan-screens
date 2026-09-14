@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Lock, boot, idle and branding state for Lacquer's Screens sections (read-only).
+
+Lock and boot settings come from lock-explorer over its IPC, never from its
+shell.json entry: its in-memory overrides win over the file.
+"""
+import glob, json, os, re, subprocess
+
+HOME = os.environ.get("HOME", "")
+OMARCHY = os.environ.get("OMARCHY_PATH") or "/usr/share/omarchy"
+LOCK_DIR = os.path.join(HOME, ".config/omarchy/plugins/io.github.sirjul1337.lock-explorer")
+PREVIEWS = os.path.join(HOME, ".local/state/omarchy/lock-explorer-boot-previews")
+VIDEOS = os.path.join(HOME, ".config/omarchy/lock-videos")
+BRANDING = os.path.join(HOME, ".config/omarchy/branding")
+
+
+def ipc(*args):
+    try:
+        r = subprocess.run(["omarchy-shell", "lock"] + list(args), capture_output=True, text=True, timeout=4)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def boot_capable():
+    text = read(os.path.join(LOCK_DIR, "Designs.js")) or ""
+    out = []
+    for line in text.splitlines():
+        if "boot: true" not in line:
+            continue
+        i = re.search(r'id:\s*"([^"]+)"', line)
+        n = re.search(r'name:\s*"([^"]+)"', line)
+        c = re.search(r'clipFile:\s*"([^"]+)"', line)
+        if i:
+            out.append({"id": i.group(1), "name": n.group(1) if n else i.group(1), "clip": c.group(1) if c else ""})
+    return out
+
+
+def preview_for(card_id):
+    stem = card_id.replace(":", "-")
+    files = [f for f in glob.glob(os.path.join(PREVIEWS, glob.escape(stem) + "-*.png"))
+             if not os.path.basename(f)[len(stem) + 1:].startswith("lock-")]
+    return max(files, key=os.path.getmtime) if files else ""
+
+
+def boot_cards():
+    cards = [{"id": "stock", "name": "Untouched"}, {"id": "theme", "name": "Theme colours"}]
+    claimed = set()
+    for d in boot_capable():
+        cards.append({"id": d["id"], "name": d["name"]})
+        if d["clip"]:
+            claimed.add(d["clip"])
+    try:
+        for v in sorted(os.listdir(VIDEOS)):
+            if v not in claimed and not v.startswith("."):
+                cards.append({"id": "video:" + v, "name": re.sub(r"\.[^.]+$", "", v)})
+    except OSError:
+        pass
+    for c in cards:
+        c["preview"] = preview_for(c["id"])
+    return cards
+
+
+def art(name, default_name):
+    text = read(os.path.join(BRANDING, name))
+    default = read(os.path.join(OMARCHY, default_name))
+    return {"text": text or "", "isDefault": text is not None and text == default}
+
+
+def main():
+    installed = os.path.isdir(LOCK_DIR)
+    status = {}
+    designs = []
+    if installed:
+        try:
+            status = json.loads(ipc("status") or "{}")
+        except ValueError:
+            status = {}
+        try:
+            designs = json.loads(ipc("designs") or "[]")
+        except ValueError:
+            designs = []
+    try:
+        shell = json.load(open(os.path.join(HOME, ".config/omarchy/shell.json")))
+    except Exception:
+        shell = {}
+    idle = shell.get("idle") if isinstance(shell.get("idle"), dict) else {}
+    print(json.dumps({
+        "lockExplorer": installed and bool(status),
+        "status": status,
+        "designs": designs,
+        "clock": ipc("clockFormat") if installed else "",
+        "bootCards": boot_cards() if installed else [],
+        "idle": {"screensaver": idle.get("screensaver", 150), "lock": idle.get("lock", 300)},
+        "screensaverOff": os.path.isfile(os.path.join(HOME, ".local/state/omarchy/toggles/screensaver-off")),
+        "screensaver": art("screensaver.txt", "logo.txt"),
+        "about": art("about.txt", "icon.txt"),
+    }))
+
+
+if __name__ == "__main__":
+    main()

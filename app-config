@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+"""Per-app look settings for Lacquer: terminals, btop and the starship prompt.
+
+  app-config print
+  app-config set terminal padding|cursor|blink|opacity VALUE
+  app-config set btop theme_background|rounded_corners|vim_keys|graph_symbol|update_ms VALUE
+  app-config set starship add_newline|command_timeout VALUE
+
+A theme switch never writes these files (themes only regenerate the files they
+import), so a change here holds without a hook. Edits replace single lines in
+place in each file's own format and only add a line (or a section) when the
+key is missing, so Omarchy's own sed patterns keep matching. Terminal settings
+go to every installed terminal; font and font size stay with Fonts & text.
+"""
+import json, os, re, shutil, subprocess, sys, tempfile
+
+HOME = os.environ.get("HOME", "")
+CFG = os.path.join(HOME, ".config")
+TERMINALS = {
+    "foot": os.path.join(CFG, "foot/foot.ini"),
+    "alacritty": os.path.join(CFG, "alacritty/alacritty.toml"),
+    "kitty": os.path.join(CFG, "kitty/kitty.conf"),
+    "ghostty": os.path.join(CFG, "ghostty/config"),
+}
+BTOP = os.path.join(CFG, "btop/btop.conf")
+STARSHIP = os.path.join(CFG, "starship.toml")
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def write(path, text):
+    target = os.path.realpath(path)
+    fd, tmp = tempfile.mkstemp(prefix=".lacquer.", dir=os.path.dirname(target))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.chmod(tmp, os.stat(target).st_mode & 0o777)
+    os.replace(tmp, target)
+
+
+# ------------------------------------------------------------------ line editing
+#
+# A "sectioned" file has [section] headers (foot, alacritty, starship's top
+# level); a "flat" one does not (kitty, ghostty, btop). `sep` is how a key is
+# joined to its value in that file. Only uncommented lines ever match.
+
+def key_re(key, sep):
+    k = re.escape(key)
+    if sep == " ":
+        return re.compile(r"^(\s*)" + k + r"(\s+)(.*?)\s*$")
+    return re.compile(r"^(\s*)" + k + r"(\s*=\s*)(.*?)\s*$")
+
+
+def section_bounds(lines, section):
+    """[start, end) of a section's body; section None means before the first header."""
+    header = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
+    start, end = (0, len(lines)) if section is None else (None, None)
+    for i, line in enumerate(lines):
+        m = header.match(line)
+        if not m:
+            continue
+        if section is None:
+            return 0, i
+        if start is not None:
+            return start, i
+        if m.group(1).strip() == section:
+            start = i + 1
+    if section is None:
+        return start, end
+    return (start, len(lines)) if start is not None else (None, None)
+
+
+def get_value(text, key, sep, section=None, flat=False):
+    lines = (text or "").split("\n")
+    lo, hi = (0, len(lines)) if flat else section_bounds(lines, section)
+    if lo is None:
+        return None
+    r = key_re(key, sep)
+    found = None
+    for line in lines[lo:hi]:
+        m = r.match(line)
+        if m:
+            found = m.group(3)  # last one wins, as in kitty and ghostty
+    return found
+
+
+def set_value(text, key, sep, value, section=None, flat=False):
+    """Replace the key's last line, or add it. value None removes the key."""
+    lines = text.split("\n")
+    joiner = " " if sep == " " else (" = " if sep == " = " else "=")
+    lo, hi = (0, len(lines)) if flat else section_bounds(lines, section)
+    r = key_re(key, sep)
+    if lo is not None:
+        hits = [i for i in range(lo, hi) if r.match(lines[i])]
+        if hits:
+            i = hits[-1]
+            if value is None:
+                del lines[i]
+                # Drop a section this left empty, header and all.
+                if section is not None and not flat:
+                    lo2, hi2 = section_bounds(lines, section)
+                    if lo2 is not None and all(not l.strip() for l in lines[lo2:hi2]):
+                        del lines[lo2 - 1:hi2]
+                        while len(lines) > 1 and lines[-1] == "" and lines[-2] == "":
+                            lines.pop()
+                return "\n".join(lines)
+            m = r.match(lines[i])
+            lines[i] = m.group(1) + key + m.group(2) + value
+            return "\n".join(lines)
+    if value is None:
+        return text
+    entry = key + joiner + value
+    if lo is None:
+        # Add the section at the end of the file.
+        while lines and lines[-1] == "":
+            lines.pop()
+        lines += ["", "[" + section + "]", entry, ""]
+        return "\n".join(lines)
+    # Insert after the section's last non-blank line.
+    at = hi
+    while at > lo and not lines[at - 1].strip():
+        at -= 1
+    lines.insert(at, entry)
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ terminals
+
+def installed(name):
+    return shutil.which(name) is not None
+
+
+def term_get(name, text):
+    if name == "foot":
+        pad = get_value(text, "pad", "=", "main") or ""
+        m = re.match(r"(\d+)", pad)
+        style = get_value(text, "style", "=", "cursor") or "block"
+        blink = get_value(text, "blink", "=", "cursor") or "no"
+        alpha = get_value(text, "alpha", "=", "colors-dark")
+        return {"padding": int(m.group(1)) if m else 0, "cursor": style,
+                "blink": blink == "yes", "opacity": round(float(alpha) * 100) if alpha else 100}
+    if name == "alacritty":
+        px = get_value(text, "padding.x", " = ", "window") or "0"
+        shape = (get_value(text, "style.shape", " = ", "cursor") or '"Block"').strip('"').lower()
+        blinking = (get_value(text, "style.blinking", " = ", "cursor") or '"Off"').strip('"')
+        op = get_value(text, "opacity", " = ", "window")
+        return {"padding": int(float(px)), "cursor": shape, "blink": blinking in ("On", "Always"),
+                "opacity": round(float(op) * 100) if op else 100}
+    if name == "kitty":
+        pad = get_value(text, "window_padding_width", " ", flat=True) or "0"
+        shape = get_value(text, "cursor_shape", " ", flat=True) or "block"
+        blink = get_value(text, "cursor_blink_interval", " ", flat=True) or "-1"
+        op = get_value(text, "background_opacity", " ", flat=True)
+        return {"padding": int(float(pad.split()[0])), "cursor": shape, "blink": float(blink) != 0,
+                "opacity": round(float(op) * 100) if op else 100}
+    if name == "ghostty":
+        pad = get_value(text, "window-padding-x", " = ", flat=True) or "0"
+        style = (get_value(text, "cursor-style", " = ", flat=True) or '"block"').strip('"')
+        blink = get_value(text, "cursor-style-blink", " = ", flat=True) or "true"
+        op = get_value(text, "background-opacity", " = ", flat=True)
+        return {"padding": int(float(pad.split(",")[0])), "cursor": "beam" if style == "bar" else style,
+                "blink": blink == "true", "opacity": round(float(op) * 100) if op else 100}
+
+
+def term_set(name, text, key, value):
+    if key == "padding":
+        n = str(int(value))
+        if name == "foot":
+            return set_value(text, "pad", "=", n + "x" + n, "main")
+        if name == "alacritty":
+            return set_value(set_value(text, "padding.x", " = ", n, "window"), "padding.y", " = ", n, "window")
+        if name == "kitty":
+            return set_value(text, "window_padding_width", " ", n, flat=True)
+        if name == "ghostty":
+            return set_value(set_value(text, "window-padding-x", " = ", n, flat=True), "window-padding-y", " = ", n, flat=True)
+    if key == "cursor":
+        if name == "foot":
+            return set_value(text, "style", "=", value, "cursor")
+        if name == "alacritty":
+            # Omarchy's alacritty.toml has no [cursor] section; its defaults
+            # (Block, Off) are written as "no key" so the file round-trips.
+            return set_value(text, "style.shape", " = ", None if value == "block" else '"' + value.capitalize() + '"', "cursor")
+        if name == "kitty":
+            return set_value(text, "cursor_shape", " ", value, flat=True)
+        if name == "ghostty":
+            return set_value(text, "cursor-style", " = ", '"' + ("bar" if value == "beam" else value) + '"', flat=True)
+    if key == "blink":
+        on = value == "on"
+        if name == "foot":
+            return set_value(text, "blink", "=", "yes" if on else "no", "cursor")
+        if name == "alacritty":
+            return set_value(text, "style.blinking", " = ", '"On"' if on else None, "cursor")
+        if name == "kitty":
+            return set_value(text, "cursor_blink_interval", " ", "-1" if on else "0", flat=True)
+        if name == "ghostty":
+            return set_value(text, "cursor-style-blink", " = ", "true" if on else "false", flat=True)
+    if key == "opacity":
+        pct = int(value)
+        v = None if pct >= 100 else ("%.2f" % (pct / 100)).rstrip("0").rstrip(".")
+        if name == "foot":
+            return set_value(text, "alpha", "=", v, "colors-dark")
+        if name == "alacritty":
+            return set_value(text, "opacity", " = ", v, "window")
+        if name == "kitty":
+            return set_value(text, "background_opacity", " ", v, flat=True)
+        if name == "ghostty":
+            return set_value(text, "background-opacity", " = ", v, flat=True)
+    raise ValueError(key)
+
+
+def reload_terminal(name):
+    sig = {"kitty": "-USR1", "ghostty": "-SIGUSR2"}.get(name)
+    if sig:
+        subprocess.run(["pkill", sig, "-x", name], capture_output=True)
+
+
+# ------------------------------------------------------------------ btop, starship
+
+BTOP_KEYS = {"theme_background": "bool", "rounded_corners": "bool", "vim_keys": "bool",
+             "graph_symbol": ("braille", "block", "tty"), "update_ms": (100, 10000)}
+STARSHIP_KEYS = {"add_newline": "bool", "command_timeout": (10, 10000)}
+
+
+def typed(spec, value, quote):
+    if spec == "bool":
+        if value not in ("true", "false"):
+            raise ValueError(value)
+        return value
+    if isinstance(spec, tuple) and isinstance(spec[0], int):
+        n = int(value)
+        if not spec[0] <= n <= spec[1]:
+            raise ValueError(value)
+        return str(n)
+    if value not in spec:
+        raise ValueError(value)
+    return '"' + value + '"' if quote else value
+
+
+def plain(raw):
+    if raw is None:
+        return None
+    raw = raw.split("#", 1)[0].strip() if not raw.startswith('"') else raw
+    return raw.strip('"')
+
+
+def status():
+    terms = []
+    for name, path in TERMINALS.items():
+        text = read(path)
+        if text is None or not installed(name):
+            continue
+        try:
+            values = term_get(name, text)
+        except (ValueError, TypeError):
+            values = None
+        terms.append({"name": name, "values": values})
+    btop_text = read(BTOP)
+    star_text = read(STARSHIP)
+    running = subprocess.run(["pgrep", "-x", "btop"], capture_output=True).returncode == 0
+    return {
+        "terminals": terms,
+        "default": subprocess.run(["xdg-terminal-exec", "--print-id"], capture_output=True, text=True).stdout.strip(),
+        "btop": None if btop_text is None else dict(
+            {k: plain(get_value(btop_text, k, " = ", flat=True)) for k in BTOP_KEYS}, running=running),
+        "starship": None if star_text is None else
+            {k: plain(get_value(star_text, k, " = ", None)) for k in STARSHIP_KEYS},
+    }
+
+
+def main(argv):
+    if not argv or argv[0] == "print":
+        print(json.dumps(status()))
+        return 0
+    if argv[0] != "set" or len(argv) != 4:
+        print(__doc__, file=sys.stderr)
+        return 2
+    _, target, key, value = argv
+    try:
+        if target == "terminal":
+            if key not in ("padding", "cursor", "blink", "opacity"):
+                raise ValueError(key)
+            if key == "padding" and not (value.isdigit() and 0 <= int(value) <= 60):
+                raise ValueError(value)
+            if key == "cursor" and value not in ("block", "beam", "underline"):
+                raise ValueError(value)
+            if key == "blink" and value not in ("on", "off"):
+                raise ValueError(value)
+            if key == "opacity" and not (value.isdigit() and 30 <= int(value) <= 100):
+                raise ValueError(value)
+            for name, path in TERMINALS.items():
+                text = read(path)
+                if text is None or not installed(name):
+                    continue
+                nxt = term_set(name, text, key, value)
+                if nxt != text:
+                    write(path, nxt)
+                    reload_terminal(name)
+        elif target == "btop":
+            text = read(BTOP)
+            if text is None or key not in BTOP_KEYS:
+                raise ValueError(key)
+            nxt = set_value(text, key, " = ", typed(BTOP_KEYS[key], value, True), flat=True)
+            if nxt != text:
+                write(BTOP, nxt)
+                subprocess.run(["pkill", "-SIGUSR2", "-x", "btop"], capture_output=True)
+        elif target == "starship":
+            text = read(STARSHIP)
+            if text is None or key not in STARSHIP_KEYS:
+                raise ValueError(key)
+            nxt = set_value(text, key, " = ", typed(STARSHIP_KEYS[key], value, False), None)
+            if nxt != text:
+                write(STARSHIP, nxt)
+        else:
+            raise ValueError(target)
+    except ValueError as e:
+        print("invalid setting: %s" % e, file=sys.stderr)
+        return 2
+    print(json.dumps(status()))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
