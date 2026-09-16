@@ -226,7 +226,7 @@ Item {
                 hasCursor: groupItem.groupHasCursor && index === pane.cursorOption
                 foreground: pane.app.foreground
                 accent: pane.app.accent
-                fontFamily: pane.app.fontFamily
+                fontFamily: groupItem.modelData.id === "mono" ? modelData.value : pane.app.fontFamily
                 onClicked: {
                   pane.cursorGroup = groupItem.index
                   pane.cursorOption = index

@@ -106,6 +106,12 @@ Item {
     root.confirmMono = ""
     reopenFile.setText("fonts\n")
     Quickshell.execDetached(["bash", "-c", root.monoScript, "lacquer-font", family])
+    // GTK's monospace font follows the terminal font, keeping the size it has.
+    Quickshell.execDetached(["bash", "-c",
+      'cur=$(gsettings get org.gnome.desktop.interface monospace-font-name); size=${cur%\\\'}; size=${size##* }; '
+      + '[[ $size =~ ^[0-9]+([.][0-9]+)?$ ]] || size=11; '
+      + 'gsettings set org.gnome.desktop.interface monospace-font-name "$1 $size"',
+      "lacquer-gtk-mono", family])
     root.app.statusText = "Setting " + family + " — the shell restarts"
   }
 
