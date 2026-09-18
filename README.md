@@ -2,6 +2,11 @@
 
 One app for how your Omarchy desktop looks.
 
+![The Home screen: a live miniature of your desktop, search across every setting, and a card for each section](docs/media/home.gif)
+
+[![Watch the 90-second tour](docs/media/video-thumbnail.webp)](https://github.com/Deunnis/omarchy-lacquer/releases/download/v0.3.0/lacquer-showcase.mp4)
+<sub>▶ [Watch the 90-second tour](https://github.com/Deunnis/omarchy-lacquer/releases/download/v0.3.0/lacquer-showcase.mp4) (MP4, 17 MB)</sub>
+
 | Group | Sections |
 |---|---|
 | Theme | Theme & wallpaper · Shuffle · Generate (aether) |
@@ -10,6 +15,19 @@ One app for how your Omarchy desktop looks.
 | Shell | Shell style · Bar · Menu look |
 | Screens | Lock & boot · Screensaver |
 | Apps | Terminals · btop & prompt · Plugins |
+
+<table>
+<tr>
+<td width="33%"><img src="docs/media/themes.webp" alt="Theme & wallpaper: every installed theme with its wallpapers"><br><sub><b>Theme & wallpaper</b>: every theme and its wallpapers</sub></td>
+<td width="33%"><img src="docs/media/shuffle.webp" alt="Shuffle: a new theme on every boot, or day and night themes"><br><sub><b>Shuffle</b>: a new theme every boot, or Day & Night</sub></td>
+<td width="33%"><img src="docs/media/generate.webp" alt="Generate: build a theme from any wallpaper with aether"><br><sub><b>Generate</b>: a theme from any wallpaper</sub></td>
+</tr>
+<tr>
+<td><img src="docs/media/desktop.webp" alt="GTK & icons: light or dark apps, GTK theme and icon set with previews"><br><sub><b>GTK & icons</b>: pinned through theme switches</sub></td>
+<td><img src="docs/media/curves.webp" alt="Curves: drag the bezier handles of an animation curve"><br><sub><b>Curves</b>: drag a bezier, every animation follows</sub></td>
+<td><img src="docs/media/menu-look.webp" alt="Menu look: size, corner radius, border and transparency of the Omarchy menu"><br><sub><b>Menu look</b>: size, corners, border, transparency</sub></td>
+</tr>
+</table>
 
 > **Beta.** Lacquer has so far been used on one laptop (1080p, one screen,
 > foot, mostly light themes). If yours is different (several screens,
